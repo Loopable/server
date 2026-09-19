@@ -36,6 +36,58 @@ func testStore(t *testing.T) *Store {
 	return store
 }
 
+func TestMigrationUpgradeFromPriorVersion(t *testing.T) {
+	dsn := os.Getenv("LOOPABLE_TEST_PG")
+	if dsn == "" {
+		t.Skip("set LOOPABLE_TEST_PG to a PostgreSQL DSN to run store integration tests")
+	}
+	ctx := t.Context()
+	store, err := Open(ctx, Config{DSN: dsn})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(store.Close)
+	testReset(ctx, t, store)
+
+	body, err := migrationFS.ReadFile("migrations/0001_init.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(ctx, string(body)); err != nil {
+		t.Fatalf("apply schema v1: %v", err)
+	}
+	if _, err := store.pool.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES (1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+	version, err := store.Version(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != latestVersion() {
+		t.Fatalf("version %d, want %d", version, latestVersion())
+	}
+
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("repeated upgrade: %v", err)
+	}
+
+	var hasObjects, hasGroupColumn bool
+	if err := store.pool.QueryRow(ctx, `
+		SELECT
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'objects'),
+			EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'events' AND column_name = 'group_id')
+	`).Scan(&hasObjects, &hasGroupColumn); err != nil {
+		t.Fatal(err)
+	}
+	if !hasObjects || !hasGroupColumn {
+		t.Fatalf("upgrade incomplete: objects=%v group_id=%v", hasObjects, hasGroupColumn)
+	}
+}
+
 func testReset(ctx context.Context, t *testing.T, store *Store) {
 	t.Helper()
 	for _, table := range []string{"peer_cursors", "peers", "objects", "events", "schema_migrations"} {
