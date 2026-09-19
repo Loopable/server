@@ -157,6 +157,16 @@ func (d Document) Validate() error {
 	return nil
 }
 
+// OperationalKey returns the listed operational key with the given key ID.
+func (d Document) OperationalKey(keyID []byte) (OperationalKey, bool) {
+	for _, key := range d.OperationalKeys {
+		if string(key.KeyID) == string(keyID) {
+			return key, true
+		}
+	}
+	return OperationalKey{}, false
+}
+
 func (d Document) unsigned() map[uint64]any {
 	value := map[uint64]any{0: d.ProtocolVersion, 1: d.InstanceID, 2: d.RootPublicKey, 3: operationalKeys(d.OperationalKeys), 4: d.Domain, 5: d.Administrator}
 	if d.Description != "" {

@@ -24,6 +24,7 @@ type Authorization struct {
 	KeyID      []byte
 	RequestID  []byte
 	Timestamp  uint64
+	AccountID  []byte
 	Signature  []byte
 }
 
@@ -43,7 +44,16 @@ func (a Authorization) HeaderValue() (string, error) {
 	if len(a.Signature) != ed25519.SignatureSize {
 		return "", errors.New("invalid authorization signature")
 	}
-	return "Loopable v=1;instance=" + instance + ";key=" + key + ";request=" + request + ";ts=" + strconv.FormatUint(a.Timestamp, 10) + ";sig=" + base64.RawURLEncoding.EncodeToString(a.Signature), nil
+	header := "Loopable v=1;instance=" + instance + ";key=" + key + ";request=" + request + ";ts=" + strconv.FormatUint(a.Timestamp, 10)
+	if len(a.AccountID) != 0 {
+		account, err := identifiers.String(identifiers.AccountID, a.AccountID)
+		if err != nil {
+			return "", err
+		}
+		header += ";acc=" + account
+	}
+	header += ";sig=" + base64.RawURLEncoding.EncodeToString(a.Signature)
+	return header, nil
 }
 
 func ParseAuthorization(value string) (Authorization, error) {
@@ -51,7 +61,7 @@ func ParseAuthorization(value string) (Authorization, error) {
 		return Authorization{}, errors.New("invalid authorization scheme")
 	}
 	parts := strings.Split(value[len("Loopable "):], ";")
-	if len(parts) != 6 {
+	if len(parts) < 6 {
 		return Authorization{}, errors.New("invalid authorization parameters")
 	}
 	values := make(map[string]string, len(parts))
@@ -88,7 +98,14 @@ func ParseAuthorization(value string) (Authorization, error) {
 	if err != nil || len(signature) != ed25519.SignatureSize {
 		return Authorization{}, errors.New("invalid authorization signature")
 	}
-	return Authorization{InstanceID: instanceID, KeyID: keyID, RequestID: requestID, Timestamp: timestamp, Signature: signature}, nil
+	var accountID []byte
+	if account, ok := values["acc"]; ok {
+		accountID, err = identifiers.Parse(identifiers.AccountID, account)
+		if err != nil {
+			return Authorization{}, err
+		}
+	}
+	return Authorization{InstanceID: instanceID, KeyID: keyID, RequestID: requestID, Timestamp: timestamp, AccountID: accountID, Signature: signature}, nil
 }
 
 type RequestAuthentication struct {
@@ -99,10 +116,15 @@ type RequestAuthentication struct {
 	RequestID []byte
 	Timestamp uint64
 	BodyHash  []byte
+	AccountID []byte
 }
 
 func (r RequestAuthentication) unsigned() map[uint64]any {
-	return map[uint64]any{0: r.Method, 1: r.Host, 2: r.Path, 3: r.Query, 4: r.RequestID, 5: r.Timestamp, 6: r.BodyHash}
+	value := map[uint64]any{0: r.Method, 1: r.Host, 2: r.Path, 3: r.Query, 4: r.RequestID, 5: r.Timestamp, 6: r.BodyHash}
+	if len(r.AccountID) != 0 {
+		value[7] = r.AccountID
+	}
+	return value
 }
 
 func HashBody(body []byte) []byte {
@@ -147,6 +169,9 @@ func (r RequestAuthentication) Validate() error {
 	}
 	if len(r.BodyHash) != sha256.Size {
 		return fmt.Errorf("body hash has %d bytes, want %d", len(r.BodyHash), sha256.Size)
+	}
+	if len(r.AccountID) != 0 && len(r.AccountID) != identifiers.LongLength {
+		return fmt.Errorf("account ID has %d bytes, want %d", len(r.AccountID), identifiers.LongLength)
 	}
 	return nil
 }
