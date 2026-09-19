@@ -63,6 +63,9 @@ func (e Event) Verify(publicKey ed25519.PublicKey) error {
 }
 
 func (e Event) Validate() error {
+	if _, err := LookupType(e.EventType); err != nil {
+		return err
+	}
 	if len(e.EventID) != identifiers.ShortLength || len(e.AccountID) != identifiers.LongLength || len(e.DeviceID) != identifiers.ShortLength {
 		return errors.New("invalid event identifier lengths")
 	}
