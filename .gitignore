@@ -1,0 +1,88 @@
+# Binaries
+
+/bin/
+/build/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go build/test artifacts
+
+*.test
+*.out
+coverage.out
+coverage.html
+profile.cov
+
+# Go workspace
+
+go.work
+go.work.sum
+
+# Local development
+
+.env
+.env.*
+!.env.example
+*.local
+
+# Local data
+
+/data/
+/storage/
+/uploads/
+/media/
+/tmp/
+
+# Databases
+
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Logs
+
+*.log
+/logs/
+
+# IDEs / editors
+
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# OS files
+
+Thumbs.db
+ehthumbs.db
+
+# Generated files
+
+/generated/
+/gen/
+
+# Test artifacts
+
+/test-results/
+/coverage/
+
+# Secrets / credentials
+
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# Local certificates
+
+/certs/
