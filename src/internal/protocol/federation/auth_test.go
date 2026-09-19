@@ -43,3 +43,21 @@ func TestRequestFreshness(t *testing.T) {
 		t.Fatal("accepted stale request")
 	}
 }
+
+func TestAuthorizationHeaderRoundTrip(t *testing.T) {
+	authorization := Authorization{InstanceID: bytes.Repeat([]byte{1}, 32), KeyID: bytes.Repeat([]byte{2}, 16), RequestID: bytes.Repeat([]byte{3}, 16), Timestamp: 1000, Signature: bytes.Repeat([]byte{4}, 64)}
+	header, err := authorization.HeaderValue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseAuthorization(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Timestamp != authorization.Timestamp || !bytes.Equal(parsed.InstanceID, authorization.InstanceID) || !bytes.Equal(parsed.Signature, authorization.Signature) {
+		t.Fatal("authorization header did not round-trip")
+	}
+	if _, err := ParseAuthorization(header + ";key=" + "x"); err == nil {
+		t.Fatal("accepted duplicate parameter")
+	}
+}
