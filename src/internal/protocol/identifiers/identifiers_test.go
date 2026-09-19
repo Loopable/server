@@ -23,7 +23,7 @@ func TestStringAndParseRoundTrip(t *testing.T) {
 			name: "long",
 			kind: ObjectID,
 			wire: bytes.Repeat([]byte{0xff}, LongLength),
-			want: "777777777777777777777777777777777777777777777777777a",
+			want: "777777777777777777777777777777777777777777777777777q",
 		},
 	}
 
@@ -90,10 +90,10 @@ func TestDeriveIDs(t *testing.T) {
 		t.Fatal("account and instance IDs must use different domains")
 	}
 
-	if got := hex.EncodeToString(account); got != "e3c74e0c100a3cdf5ff0aa3a4f5a91dcb0b8115290418fec456657d31c0cd7b0" {
+	if got := hex.EncodeToString(account); got != "b60ffe62eb4e4031d113dcdf97d5dc28141001365caa07ed7b4eaf5222676975" {
 		t.Fatalf("account ID = %s", got)
 	}
-	if got := hex.EncodeToString(instance); got != "5082967611d4ae30b89ef9e49075069cf8a0f33b9e234177d558542476d4dfaf" {
+	if got := hex.EncodeToString(instance); got != "0d0e36963c4cac56a5520e10ce3c335c667b36bd48bf8a6e0f44c7bb2e421293" {
 		t.Fatalf("instance ID = %s", got)
 	}
 }

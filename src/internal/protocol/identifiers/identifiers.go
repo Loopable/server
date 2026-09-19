@@ -49,15 +49,19 @@ func (t Type) length() int {
 	}
 }
 
+func (t Type) valid() bool {
+	return t.length() != 0 || t == EventID
+}
+
 // Parse decodes a canonical text-form identifier. Input is case-insensitive;
 // output is always the exact wire length required by kind.
 func Parse(kind Type, text string) ([]byte, error) {
 	length := kind.length()
-	if length == 0 {
+	if !kind.valid() {
 		return nil, errors.New("unknown identifier type")
 	}
 
-	text = strings.ToLower(text)
+	text = strings.ToUpper(text)
 	encoding := shortEncoding
 	if length == LongLength {
 		encoding = longEncoding
@@ -79,7 +83,7 @@ func Parse(kind Type, text string) ([]byte, error) {
 // String returns the canonical lowercase, unpadded base32 representation.
 func String(kind Type, wire []byte) (string, error) {
 	length := kind.length()
-	if length == 0 {
+	if !kind.valid() {
 		return "", errors.New("unknown identifier type")
 	}
 	if len(wire) != length {
@@ -97,7 +101,7 @@ func String(kind Type, wire []byte) (string, error) {
 // are used directly, as required by the protocol.
 func Random(kind Type) ([]byte, error) {
 	length := kind.length()
-	if length == 0 {
+	if !kind.valid() {
 		return nil, errors.New("unknown identifier type")
 	}
 
