@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"golang.org/x/net/idna"
+	"loopable.party/server/internal/protocol/encoding"
 	"loopable.party/server/internal/protocol/identifiers"
 	"loopable.party/server/internal/protocol/signatures"
 )
@@ -176,6 +177,173 @@ func (d Document) unsigned() map[uint64]any {
 		value[7] = d.Rules
 	}
 	return value
+}
+
+// Wire returns the complete signed document map, including its signature.
+func (d Document) Wire() map[uint64]any {
+	value := d.unsigned()
+	value[8] = d.Signature
+	return value
+}
+
+// Encode returns the deterministic CBOR of the complete document.
+func (d Document) Encode() ([]byte, error) {
+	if err := d.Verify(); err != nil {
+		return nil, err
+	}
+	return encoding.Encode(d.Wire())
+}
+
+// Parse decodes and validates a wire document.
+func Parse(value any) (Document, error) {
+	fields, err := asFieldMap(value)
+	if err != nil {
+		return Document{}, errors.New("instance document must be a map")
+	}
+	protocolVersion, ok := fields[0].(string)
+	if !ok {
+		return Document{}, errors.New("instance document field 0 must be text")
+	}
+	instanceID, err := fieldBytes(fields, 1)
+	if err != nil {
+		return Document{}, err
+	}
+	rootPublicKey, err := fieldBytes(fields, 2)
+	if err != nil {
+		return Document{}, err
+	}
+	keysValue, ok := fields[3].([]any)
+	if !ok {
+		return Document{}, errors.New("instance document field 3 must be an array")
+	}
+	keys := make([]OperationalKey, len(keysValue))
+	for i, item := range keysValue {
+		key, err := parseOperationalKey(item)
+		if err != nil {
+			return Document{}, fmt.Errorf("operational key %d: %w", i, err)
+		}
+		keys[i] = key
+	}
+	domain, ok := fields[4].(string)
+	if !ok {
+		return Document{}, errors.New("instance document field 4 must be text")
+	}
+	administrator, err := fieldBytes(fields, 5)
+	if err != nil {
+		return Document{}, err
+	}
+	document := Document{
+		ProtocolVersion: protocolVersion,
+		InstanceID:      instanceID,
+		RootPublicKey:   ed25519.PublicKey(rootPublicKey),
+		OperationalKeys: keys,
+		Domain:          domain,
+		Administrator:   administrator,
+	}
+	if description, ok := fields[6]; ok {
+		text, ok := description.(string)
+		if !ok {
+			return Document{}, errors.New("instance document field 6 must be text")
+		}
+		document.Description = text
+	}
+	if rulesValue, ok := fields[7]; ok {
+		rules, ok := rulesValue.([]any)
+		if !ok {
+			return Document{}, errors.New("instance document field 7 must be an array")
+		}
+		document.Rules = make([]string, len(rules))
+		for i, rule := range rules {
+			text, ok := rule.(string)
+			if !ok {
+				return Document{}, errors.New("instance document field 7 must contain text")
+			}
+			document.Rules[i] = text
+		}
+	}
+	signature, err := fieldBytes(fields, 8)
+	if err != nil {
+		return Document{}, err
+	}
+	document.Signature = signature
+	if err := document.Verify(); err != nil {
+		return Document{}, err
+	}
+	return document, nil
+}
+
+func parseOperationalKey(value any) (OperationalKey, error) {
+	fields, err := asFieldMap(value)
+	if err != nil {
+		return OperationalKey{}, errors.New("operational key must be a map")
+	}
+	keyID, err := fieldBytes(fields, 0)
+	if err != nil {
+		return OperationalKey{}, err
+	}
+	publicKey, err := fieldBytes(fields, 1)
+	if err != nil {
+		return OperationalKey{}, err
+	}
+	notBefore, err := fieldUint(fields, 2)
+	if err != nil {
+		return OperationalKey{}, err
+	}
+	notAfter, err := fieldUint(fields, 3)
+	if err != nil {
+		return OperationalKey{}, err
+	}
+	key := OperationalKey{KeyID: keyID, PublicKey: ed25519.PublicKey(publicKey), NotBefore: notBefore, NotAfter: notAfter}
+	if len(key.KeyID) != identifiers.ShortLength || len(key.PublicKey) != ed25519.PublicKeySize {
+		return OperationalKey{}, errors.New("operational key has invalid lengths")
+	}
+	return key, nil
+}
+
+func asFieldMap(value any) (map[uint64]any, error) {
+	switch fields := value.(type) {
+	case map[uint64]any:
+		return fields, nil
+	case map[any]any:
+		normalized := make(map[uint64]any, len(fields))
+		for key, item := range fields {
+			number, ok := key.(uint64)
+			if !ok {
+				return nil, errors.New("map key is not an unsigned integer")
+			}
+			normalized[number] = item
+		}
+		return normalized, nil
+	default:
+		return nil, errors.New("value is not a map")
+	}
+}
+
+func fieldBytes(fields map[uint64]any, key uint64) ([]byte, error) {
+	value, ok := fields[key]
+	if !ok {
+		return nil, fmt.Errorf("instance document field %d is missing", key)
+	}
+	switch buffer := value.(type) {
+	case []byte:
+		return buffer, nil
+	case ed25519.PublicKey:
+		return []byte(buffer), nil
+	default:
+		return nil, fmt.Errorf("instance document field %d is not bytes", key)
+	}
+}
+
+func fieldUint(fields map[uint64]any, key uint64) (uint64, error) {
+	value, ok := fields[key]
+	if !ok {
+		return 0, fmt.Errorf("instance document field %d is missing", key)
+	}
+	number, ok := value.(uint64)
+	if !ok {
+		return 0, fmt.Errorf("instance document field %d is not an unsigned integer", key)
+	}
+	return number, nil
 }
 
 func operationalKeys(keys []OperationalKey) []any {
