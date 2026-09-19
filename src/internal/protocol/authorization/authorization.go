@@ -24,6 +24,7 @@ var (
 	ErrTrustConflict      = errors.New("trusted-device state is ambiguous")
 	ErrSignatureInvalid   = errors.New("event signature is invalid")
 	ErrMemberRequired     = errors.New("group membership is required")
+	ErrSchemaInvalid      = errors.New("event body schema is invalid")
 )
 
 // MemberFunc reports whether accountID is currently a member of groupID.
@@ -43,7 +44,7 @@ func Validate(event events.Event, known map[string]events.Event, memberOf Member
 		if err := validateGenesis(event, known); err != nil {
 			return err
 		}
-		return validateBodySchema(event)
+		return schemaError(validateBodySchema(event))
 	}
 	closure, err := causalClosure(event, known)
 	if err != nil {
@@ -81,7 +82,16 @@ func Validate(event events.Event, known map[string]events.Event, memberOf Member
 	if err := applyTransition(index, event); err != nil {
 		return err
 	}
-	return validateBodySchema(event)
+	return schemaError(validateBodySchema(event))
+}
+
+// schemaError wraps a body-schema rejection so callers can map it to a
+// protocol error code instead of reporting it as an internal failure.
+func schemaError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %v", ErrSchemaInvalid, err)
 }
 
 // applyTransition re-applies an event's own state transition onto the index
