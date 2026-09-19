@@ -13,10 +13,18 @@ const (
 	DeviceSuperseded
 )
 
+// Device kinds per protospec/spec/12-devices.md section 12.5.
+const (
+	DeviceKindClient  uint64 = 0
+	DeviceKindBackup  uint64 = 1
+	DeviceKindService uint64 = 2
+)
+
 type DeviceState struct {
 	ID            []byte
 	SigningKey    []byte
 	EncryptionKey []byte
+	Kind          uint64
 	Status        DeviceStatus
 }
 
@@ -77,6 +85,9 @@ func (i *AuthorizationIndex) TransferTrust(newDeviceID []byte) error {
 	newDevice, ok := i.Devices[string(newDeviceID)]
 	if !ok || newDevice.Status != DeviceAuthorized {
 		return errors.New("new trusted device is not authorized")
+	}
+	if newDevice.Kind == DeviceKindBackup {
+		return errors.New("backup device cannot be the trusted device")
 	}
 	if len(i.TrustedDevice) == 0 {
 		return errors.New("trusted device is not established")
