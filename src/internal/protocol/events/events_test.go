@@ -37,3 +37,25 @@ func TestEventRejectsInvalidPredecessors(t *testing.T) {
 		t.Fatal("accepted self-reference")
 	}
 }
+
+func TestGenesisDeviceIDRule(t *testing.T) {
+	base := Event{EventID: bytes.Repeat([]byte{1}, 16), EventType: 0, AccountID: bytes.Repeat([]byte{2}, 32), Body: map[uint64]any{}}
+	genesis := base
+	if err := genesis.Validate(); err != nil {
+		t.Fatalf("genesis with empty device id rejected: %v", err)
+	}
+	genesis.DeviceID = bytes.Repeat([]byte{3}, 16)
+	if err := genesis.Validate(); err == nil {
+		t.Fatal("accepted genesis event with non-empty device id")
+	}
+	content := base
+	content.EventType = 13
+	content.DeviceID = bytes.Repeat([]byte{3}, 16)
+	if err := content.Validate(); err != nil {
+		t.Fatalf("content event with device id rejected: %v", err)
+	}
+	content.DeviceID = nil
+	if err := content.Validate(); err == nil {
+		t.Fatal("accepted content event without device id")
+	}
+}

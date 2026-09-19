@@ -10,7 +10,7 @@ import (
 
 func TestPutIsIdempotentAndDetectsCollisions(t *testing.T) {
 	store := New()
-	event := events.Event{EventID: bytes.Repeat([]byte{1}, 16), EventType: 0, AccountID: bytes.Repeat([]byte{2}, 32), DeviceID: bytes.Repeat([]byte{3}, 16), Body: map[uint64]any{}}
+	event := events.Event{EventID: bytes.Repeat([]byte{1}, 16), EventType: 13, AccountID: bytes.Repeat([]byte{2}, 32), DeviceID: bytes.Repeat([]byte{3}, 16), Body: map[uint64]any{}}
 	if err := store.Put(event); err != nil {
 		t.Fatal(err)
 	}

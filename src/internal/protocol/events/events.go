@@ -66,7 +66,7 @@ func (e Event) Validate() error {
 	if _, err := LookupType(e.EventType); err != nil {
 		return err
 	}
-	if len(e.EventID) != identifiers.ShortLength || len(e.AccountID) != identifiers.LongLength || len(e.DeviceID) != identifiers.ShortLength {
+	if len(e.EventID) != identifiers.ShortLength || len(e.AccountID) != identifiers.LongLength || e.EventType != 0 && len(e.DeviceID) != identifiers.ShortLength || e.EventType == 0 && len(e.DeviceID) != 0 {
 		return errors.New("invalid event identifier lengths")
 	}
 	if e.Body == nil {
