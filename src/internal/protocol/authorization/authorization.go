@@ -40,7 +40,10 @@ func Validate(event events.Event, known map[string]events.Event, memberOf Member
 		return err
 	}
 	if event.EventType == 0 {
-		return validateGenesis(event, known)
+		if err := validateGenesis(event, known); err != nil {
+			return err
+		}
+		return validateBodySchema(event)
 	}
 	closure, err := causalClosure(event, known)
 	if err != nil {
@@ -75,7 +78,10 @@ func Validate(event events.Event, known map[string]events.Event, memberOf Member
 	case events.Member:
 		return checkMembership(event, memberOf)
 	}
-	return applyTransition(index, event)
+	if err := applyTransition(index, event); err != nil {
+		return err
+	}
+	return validateBodySchema(event)
 }
 
 // applyTransition re-applies an event's own state transition onto the index

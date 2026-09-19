@@ -187,6 +187,29 @@ func TestGenesisRejectsMismatchedAccountID(t *testing.T) {
 	}
 }
 
+// postEvent returns a schema-conformant POST_CREATED event referencing one
+// post version, signed by the given device.
+func postEvent(t *testing.T, accountID, deviceID []byte, predecessor []byte, eventSeed uint8, createdAt uint64, signer ed25519.PrivateKey) events.Event {
+	t.Helper()
+	event := events.Event{
+		EventID:      bytes.Repeat([]byte{eventSeed}, identifiers.ShortLength),
+		EventType:    13,
+		AccountID:    accountID,
+		DeviceID:     deviceID,
+		CreatedAt:    createdAt,
+		Predecessors: [][]byte{predecessor},
+		Body:         map[uint64]any{},
+		ObjectReferences: []events.ObjectReference{{
+			ObjectID:  bytes.Repeat([]byte{0xaa}, identifiers.LongLength),
+			VersionID: bytes.Repeat([]byte{0xbb}, identifiers.LongLength),
+		}},
+	}
+	if err := event.Sign(signer); err != nil {
+		t.Fatal(err)
+	}
+	return event
+}
+
 func TestAuthorizedDeviceSignsContentEvent(t *testing.T) {
 	fixture := newAccountFixture(t)
 	authorized := newDeviceFixture(t, 0x03, accounts.DeviceKindClient)
@@ -196,18 +219,7 @@ func TestAuthorizedDeviceSignsContentEvent(t *testing.T) {
 	}
 	fixture.known[string(deviceAuthorized.EventID)] = deviceAuthorized
 
-	post := events.Event{
-		EventID:      bytes.Repeat([]byte{0xd3}, identifiers.ShortLength),
-		EventType:    13,
-		AccountID:    fixture.accountID,
-		DeviceID:     authorized.id,
-		CreatedAt:    3,
-		Predecessors: [][]byte{deviceAuthorized.EventID},
-		Body:         map[uint64]any{},
-	}
-	if err := post.Sign(authorized.private); err != nil {
-		t.Fatal(err)
-	}
+	post := postEvent(t, fixture.accountID, authorized.id, deviceAuthorized.EventID, 0xd3, 3, authorized.private)
 	if err := Validate(post, fixture.known, nil); err != nil {
 		t.Fatalf("post rejected: %v", err)
 	}
@@ -271,18 +283,7 @@ func TestRevokedDeviceRejectsNewEvent(t *testing.T) {
 	}
 	fixture.known[string(revoked.EventID)] = revoked
 
-	post := events.Event{
-		EventID:      bytes.Repeat([]byte{0xd8}, identifiers.ShortLength),
-		EventType:    13,
-		AccountID:    fixture.accountID,
-		DeviceID:     authorized.id,
-		CreatedAt:    6,
-		Predecessors: [][]byte{revoked.EventID},
-		Body:         map[uint64]any{},
-	}
-	if err := post.Sign(authorized.private); err != nil {
-		t.Fatal(err)
-	}
+	post := postEvent(t, fixture.accountID, authorized.id, revoked.EventID, 0xd8, 6, authorized.private)
 	if err := Validate(post, fixture.known, nil); !errors.Is(err, ErrUnauthorizedDevice) {
 		t.Fatalf("revoked device event: got %v, want ErrUnauthorizedDevice", err)
 	}
@@ -314,18 +315,7 @@ func TestTrustedDeviceTransfer(t *testing.T) {
 	}
 	fixture.known[string(transfer.EventID)] = transfer
 
-	post := events.Event{
-		EventID:      bytes.Repeat([]byte{0xdb}, identifiers.ShortLength),
-		EventType:    13,
-		AccountID:    fixture.accountID,
-		DeviceID:     replacement.id,
-		CreatedAt:    8,
-		Predecessors: [][]byte{transfer.EventID},
-		Body:         map[uint64]any{},
-	}
-	if err := post.Sign(replacement.private); err != nil {
-		t.Fatal(err)
-	}
+	post := postEvent(t, fixture.accountID, replacement.id, transfer.EventID, 0xdb, 8, replacement.private)
 	if err := Validate(post, fixture.known, nil); err != nil {
 		t.Fatalf("replacement device event rejected: %v", err)
 	}
@@ -356,18 +346,7 @@ func TestSupersededDeviceRejectsNewEvent(t *testing.T) {
 	}
 	fixture.known[string(transfer.EventID)] = transfer
 
-	post := events.Event{
-		EventID:      bytes.Repeat([]byte{0xdd}, identifiers.ShortLength),
-		EventType:    13,
-		AccountID:    fixture.accountID,
-		DeviceID:     fixture.first.id,
-		CreatedAt:    10,
-		Predecessors: [][]byte{transfer.EventID},
-		Body:         map[uint64]any{},
-	}
-	if err := post.Sign(fixture.first.private); err != nil {
-		t.Fatal(err)
-	}
+	post := postEvent(t, fixture.accountID, fixture.first.id, transfer.EventID, 0xdd, 10, fixture.first.private)
 	if err := Validate(post, fixture.known, nil); !errors.Is(err, ErrUnauthorizedDevice) {
 		t.Fatalf("superseded device event: got %v, want ErrUnauthorizedDevice", err)
 	}
@@ -423,6 +402,10 @@ func TestTransferAmbiguityRejected(t *testing.T) {
 		CreatedAt:    13,
 		Predecessors: [][]byte{transferA.EventID, transferB.EventID},
 		Body:         map[uint64]any{},
+		ObjectReferences: []events.ObjectReference{{
+			ObjectID:  bytes.Repeat([]byte{0xaa}, identifiers.LongLength),
+			VersionID: bytes.Repeat([]byte{0xbb}, identifiers.LongLength),
+		}},
 	}
 	if err := post.Sign(fixture.first.private); err != nil {
 		t.Fatal(err)
@@ -435,18 +418,7 @@ func TestTransferAmbiguityRejected(t *testing.T) {
 func TestMissingDependency(t *testing.T) {
 	fixture := newAccountFixture(t)
 	missing := bytes.Repeat([]byte{0xef}, identifiers.ShortLength)
-	post := events.Event{
-		EventID:      bytes.Repeat([]byte{0xe2}, identifiers.ShortLength),
-		EventType:    13,
-		AccountID:    fixture.accountID,
-		DeviceID:     fixture.first.id,
-		CreatedAt:    14,
-		Predecessors: [][]byte{missing},
-		Body:         map[uint64]any{},
-	}
-	if err := post.Sign(fixture.first.private); err != nil {
-		t.Fatal(err)
-	}
+	post := postEvent(t, fixture.accountID, fixture.first.id, missing, 0xe2, 14, fixture.first.private)
 	if err := Validate(post, fixture.known, nil); !errors.Is(err, dag.ErrMissing) {
 		t.Fatalf("missing dependency: got %v, want dag.ErrMissing", err)
 	}
@@ -455,18 +427,7 @@ func TestMissingDependency(t *testing.T) {
 func TestUnknownSignerDevice(t *testing.T) {
 	fixture := newAccountFixture(t)
 	unknown := newDeviceFixture(t, 0x0b, accounts.DeviceKindClient)
-	post := events.Event{
-		EventID:      bytes.Repeat([]byte{0xe3}, identifiers.ShortLength),
-		EventType:    13,
-		AccountID:    fixture.accountID,
-		DeviceID:     unknown.id,
-		CreatedAt:    15,
-		Predecessors: [][]byte{fixture.genesis.EventID},
-		Body:         map[uint64]any{},
-	}
-	if err := post.Sign(unknown.private); err != nil {
-		t.Fatal(err)
-	}
+	post := postEvent(t, fixture.accountID, unknown.id, fixture.genesis.EventID, 0xe3, 15, unknown.private)
 	if err := Validate(post, fixture.known, nil); !errors.Is(err, ErrUnauthorizedDevice) {
 		t.Fatalf("unknown device: got %v, want ErrUnauthorizedDevice", err)
 	}
