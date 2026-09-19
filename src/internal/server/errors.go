@@ -31,6 +31,7 @@ var (
 	ErrInvalidCursor       = errors.New("sync cursor is invalid")
 	ErrUnknownPeerInstance = errors.New("peer instance is unknown")
 	errObjectNotAuthorized = errors.New("object is not available to this requester")
+	ErrAccountScope        = errors.New("event belongs to another account")
 )
 
 // malformedEncoding marks a request CBOR decoding failure for E_MALFORMED_ENCODING.
@@ -80,6 +81,8 @@ func mapError(err error, requestID []byte) *protoerrors.Error {
 	case errors.Is(err, authorization.ErrSignatureInvalid):
 		code = "E_SIGNATURE_INVALID"
 	case errors.Is(err, authorization.ErrUnauthorizedDevice):
+		code = "E_UNAUTHORIZED_DEVICE"
+	case errors.Is(err, ErrAccountScope):
 		code = "E_UNAUTHORIZED_DEVICE"
 	case errors.Is(err, authorization.ErrFirstDeviceInvalid):
 		code = "E_FIRST_DEVICE_INVALID"

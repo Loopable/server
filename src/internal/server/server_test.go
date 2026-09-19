@@ -321,6 +321,60 @@ func TestEventSubmissionRequiresAuthentication(t *testing.T) {
 	expectStatus(t, recorder, http.StatusUnauthorized)
 }
 
+func TestEventSubmissionAccountScoping(t *testing.T) {
+	env := newTestEnv(t)
+	path := "/v1/events"
+
+	// Provision a second account so its events are fully valid; otherwise the
+	// DAG check would mask whether account scoping is enforced.
+	fresh := newAccountFixture(t)
+	fresh.genesis.EventID = bytes.Repeat([]byte{0x0e}, identifiers.ShortLength)
+	if err := fresh.genesis.Sign(fresh.identityPriv); err != nil {
+		t.Fatal(err)
+	}
+	genesisWire := []any{fresh.genesis.Wire()}
+	genesisBody, err := encoding.Encode(genesisWire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := do(t, env.server, http.MethodPost, path, "", genesisBody,
+		env.instanceAuth(t, http.MethodPost, path, "", genesisBody), nil)
+	expectStatus(t, recorder, http.StatusOK)
+
+	// A valid event for fresh's account, accepted when authenticated as fresh.
+	post := accountPostEvent(t, fresh, fresh.genesis.EventID, 0xcf, 2, fresh.first.private)
+	postWire := []any{post.Wire()}
+	postBody, err := encoding.Encode(postWire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshHeader := env.authHeader(t, fresh.accountID, keyIDOf(fresh.first.signing), fresh.first.private,
+		http.MethodPost, path, "", postBody, fresh.homeInstance)
+	recorder = do(t, env.server, http.MethodPost, path, "", postBody, freshHeader, nil)
+	expectStatus(t, recorder, http.StatusOK)
+	var results []any
+	decodeBody(t, recorder.Body.Bytes(), &results)
+	result := asUintMapAny(t, results[0])
+	if result[1].(uint64) != 0 {
+		t.Fatalf("same-account submission status %d, want 0", result[1])
+	}
+
+	// The identical event is rejected when the request is scoped to another
+	// account (61.9): E_UNAUTHORIZED_DEVICE before any DAG work.
+	recorder = do(t, env.server, http.MethodPost, path, "", postBody,
+		env.accountAuth(t, http.MethodPost, path, "", postBody), nil)
+	expectStatus(t, recorder, http.StatusOK)
+	decodeBody(t, recorder.Body.Bytes(), &results)
+	result = asUintMapAny(t, results[0])
+	if result[1].(uint64) != 2 {
+		t.Fatalf("cross-account submission status %d, want 2", result[1])
+	}
+	errorValue := asUintMapAny(t, result[2])
+	if errorValue[0] != "E_UNAUTHORIZED_DEVICE" {
+		t.Fatalf("cross-account error code %#v, want E_UNAUTHORIZED_DEVICE", errorValue[0])
+	}
+}
+
 func TestGetAndFetchEvents(t *testing.T) {
 	env := newTestEnv(t)
 	post := accountPostEvent(t, env.account, env.account.genesis.EventID, 0xd3, 3, env.account.first.private)

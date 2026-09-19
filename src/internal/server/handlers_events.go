@@ -112,6 +112,13 @@ func (s *Server) acceptEventBatch(r *http.Request, item any) map[uint64]any {
 	if err != nil {
 		return submitResult(eventID, 2, mapError(asInvalidRequest(err), requestID))
 	}
+	// Account-authenticated requests are scoped to their account (61.9): an
+	// event for another account is rejected without touching the DAG. Instance
+	// authentication (account provisioning, federation) skips the check.
+	if auth := requestAuth(r); auth != nil && auth.Presented && len(auth.Account) > 0 &&
+		!bytes.Equal(event.AccountID, auth.Account) {
+		return submitResult(eventID, 2, mapError(ErrAccountScope, requestID))
+	}
 	_, err = s.submitEvent(r.Context(), event)
 	switch {
 	case err == nil:

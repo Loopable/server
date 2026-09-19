@@ -79,6 +79,12 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleHealth serves a lightweight operator liveness check outside the
+// protocol wire. It never reveals account or event data.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	s.writeCBOR(w, http.StatusOK, map[uint64]any{0: "ok", 1: s.cfg.Document.InstanceID})
+}
+
 // abort converts a response-building error into an error response.
 func abort(w http.ResponseWriter, err error) {
 	writeError(w, err, nil)

@@ -151,6 +151,7 @@ func (s *Server) Handler() http.Handler {
 	public("GET /v1/instance/roles", s.handleRoles)
 	public("GET /v1/capabilities", s.handleCapabilities)
 	public("POST /v1/device-join-requests", s.handleDeviceJoinRequests)
+	public("GET /healthz", s.handleHealth)
 
 	protected("POST /v1/events", s.handlePostEvents)
 	protected("GET /v1/events/{event_id}", s.handleGetEvent)
