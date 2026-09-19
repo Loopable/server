@@ -66,7 +66,7 @@ func Parse(value any) (Event, error) {
 	if !ok {
 		return Event{}, errors.New("event envelope body is required")
 	}
-	body, err := asFieldMap(bodyValue)
+	body, err := asFieldMap(normalize(bodyValue))
 	if err != nil {
 		return Event{}, errors.New("event envelope body must be a map")
 	}
@@ -107,6 +107,38 @@ func asFieldMap(value any) (map[uint64]any, error) {
 		return fields, nil
 	default:
 		return nil, errors.New("value must be a map")
+	}
+}
+
+// normalize converts wire-decoded containers to their canonical forms so
+// nested records (for example the map-valued first-device authorization in an
+// ACCOUNT_CREATED body) parse without re-encoding. Byte content is untouched.
+func normalize(value any) any {
+	switch value := value.(type) {
+	case map[any]any:
+		fields := make(map[uint64]any, len(value))
+		for key, item := range value {
+			id, ok := key.(uint64)
+			if !ok {
+				continue
+			}
+			fields[id] = normalize(item)
+		}
+		return fields
+	case map[uint64]any:
+		fields := make(map[uint64]any, len(value))
+		for key, item := range value {
+			fields[key] = normalize(item)
+		}
+		return fields
+	case []any:
+		items := make([]any, len(value))
+		for i, item := range value {
+			items[i] = normalize(item)
+		}
+		return items
+	default:
+		return value
 	}
 }
 
