@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 
+	"loopable.party/server/internal/protocol/encoding"
 	"loopable.party/server/internal/protocol/identifiers"
 	"loopable.party/server/internal/protocol/signatures"
 )
@@ -90,6 +91,21 @@ func (e Event) Validate() error {
 		}
 	}
 	return nil
+}
+
+// Wire returns the complete event map, including its signature.
+func (e Event) Wire() map[uint64]any {
+	value := e.unsigned()
+	value[9] = e.Signature
+	return value
+}
+
+// CanonicalBytes returns the immutable bytes used for event storage and collision checks.
+func (e Event) CanonicalBytes() ([]byte, error) {
+	if err := e.Validate(); err != nil {
+		return nil, err
+	}
+	return encoding.Encode(e.Wire())
 }
 
 func objectReferences(references []ObjectReference) []any {
