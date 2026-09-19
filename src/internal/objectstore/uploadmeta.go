@@ -6,9 +6,11 @@ import (
 )
 
 // uploadMeta is the durable state of a resumable upload, stored as an opaque
-// sidecar next to the uploaded bytes. It never carries ciphertext.
+// sidecar next to the uploaded bytes. It never carries ciphertext. The upload
+// ID travels as base64 ([]byte), not JSON text, because raw identifier bytes
+// are not valid UTF-8.
 type uploadMeta struct {
-	UploadID  string    `json:"upload_id"`
+	UploadID  []byte    `json:"upload_id"`
 	Owner     []byte    `json:"owner"`
 	Length    int64     `json:"length"`
 	Offset    int64     `json:"offset"`
@@ -18,7 +20,7 @@ type uploadMeta struct {
 
 func (m uploadMeta) upload() Upload {
 	return Upload{
-		UploadID:  []byte(m.UploadID),
+		UploadID:  append([]byte(nil), m.UploadID...),
 		Owner:     m.Owner,
 		Length:    m.Length,
 		Offset:    m.Offset,

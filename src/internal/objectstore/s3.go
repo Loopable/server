@@ -164,7 +164,7 @@ func (s *S3) CreateUpload(ctx context.Context, uploadID, owner []byte, length in
 	}
 	now := time.Now().UTC()
 	meta := uploadMeta{
-		UploadID:  string(uploadID),
+		UploadID:  append([]byte(nil), uploadID...),
 		Owner:     append([]byte(nil), owner...),
 		Length:    length,
 		CreatedAt: now,
@@ -350,7 +350,7 @@ func (s *S3) openRange(ctx context.Context, objectID, versionID []byte, offset, 
 }
 
 func (s *S3) putMeta(ctx context.Context, meta uploadMeta) error {
-	key, err := literalUploadKey([]byte(meta.UploadID))
+	key, err := literalUploadKey(meta.UploadID)
 	if err != nil {
 		return err
 	}
