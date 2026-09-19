@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"loopable.party/server/internal/protocol/encoding"
+	"loopable.party/server/internal/protocol/instance"
 	"loopable.party/server/internal/protocol/sync"
 )
 
@@ -122,6 +125,80 @@ func (s *Store) CursorsFor(ctx context.Context, peerID []byte) (map[string]Inter
 func (s *Store) ForgetPeer(ctx context.Context, peerID []byte) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM peers WHERE peer_instance_id = $1`, peerID)
 	return err
+}
+
+// PutPeerDocument records a verified peer instance document, refreshing the
+// relationship's protocol version.
+func (s *Store) PutPeerDocument(ctx context.Context, peerID []byte, document *instance.Document) error {
+	wire, err := document.Encode()
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO peers (peer_instance_id, protocol_version, document)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (peer_instance_id) DO UPDATE SET
+			protocol_version = EXCLUDED.protocol_version,
+			document = EXCLUDED.document
+	`, peerID, document.ProtocolVersion, wire)
+	return err
+}
+
+// GetPeerDocument returns one peer's verified document, or ErrUnknownPeer.
+func (s *Store) GetPeerDocument(ctx context.Context, peerID []byte) (*instance.Document, error) {
+	var wire []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT document FROM peers
+		WHERE peer_instance_id = $1 AND document IS NOT NULL
+	`, peerID).Scan(&wire)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrUnknownPeer
+	}
+	if err != nil {
+		return nil, err
+	}
+	document, err := decodePeerDocument(wire)
+	if err != nil {
+		return nil, err
+	}
+	return &document, nil
+}
+
+// PeerDocuments returns the verified document of every recorded peer.
+func (s *Store) PeerDocuments(ctx context.Context) ([]*instance.Document, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT document FROM peers WHERE document IS NOT NULL
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var documents []*instance.Document
+	for rows.Next() {
+		var wire []byte
+		if err := rows.Scan(&wire); err != nil {
+			return nil, err
+		}
+		document, err := decodePeerDocument(wire)
+		if err != nil {
+			return nil, err
+		}
+		documents = append(documents, &document)
+	}
+	return documents, rows.Err()
+}
+
+func decodePeerDocument(wire []byte) (instance.Document, error) {
+	var decoded any
+	if err := encoding.Decode(wire, &decoded); err != nil {
+		return instance.Document{}, fmt.Errorf("decode stored peer document: %w", err)
+	}
+	document, err := instance.Parse(decoded)
+	if err != nil {
+		return instance.Document{}, fmt.Errorf("parse stored peer document: %w", err)
+	}
+	return document, nil
 }
 
 func hashInterest(interest []byte) []byte {
