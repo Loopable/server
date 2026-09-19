@@ -8,7 +8,9 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 
+	"golang.org/x/net/idna"
 	"loopable.party/server/internal/protocol/identifiers"
 	"loopable.party/server/internal/protocol/signatures"
 )
@@ -62,6 +64,11 @@ func NewDocument(rootPublicKey ed25519.PublicKey, operationalKeys []OperationalK
 	if len(administrator) != identifiers.LongLength {
 		return Document{}, fmt.Errorf("administrator has %d bytes, want %d", len(administrator), identifiers.LongLength)
 	}
+	canonicalDomain, err := CanonicalHostname(domain)
+	if err != nil {
+		return Document{}, err
+	}
+	domain = canonicalDomain
 	instanceID, err := identifiers.DeriveInstanceID(rootPublicKey)
 	if err != nil {
 		return Document{}, err
@@ -74,6 +81,25 @@ func NewDocument(rootPublicKey ed25519.PublicKey, operationalKeys []OperationalK
 		Domain:          domain,
 		Administrator:   append([]byte(nil), administrator...),
 	}, nil
+}
+
+// CanonicalHostname converts a hostname to its protocol A-label form.
+func CanonicalHostname(hostname string) (string, error) {
+	if hostname == "" || strings.ContainsAny(hostname, "/\\:@?#") || strings.Contains(hostname, "://") {
+		return "", errors.New("hostname must be a name without scheme, port, or path")
+	}
+	hostname = strings.ToLower(hostname)
+	if strings.HasSuffix(hostname, ".") {
+		hostname = strings.TrimSuffix(hostname, ".")
+	}
+	if hostname == "" {
+		return "", errors.New("hostname is empty")
+	}
+	canonical, err := idna.ToASCII(hostname)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize hostname: %w", err)
+	}
+	return canonical, nil
 }
 
 // Sign signs the document with the instance root key.
@@ -114,6 +140,10 @@ func (d Document) Validate() error {
 	}
 	if len(d.OperationalKeys) == 0 || len(d.Administrator) != identifiers.LongLength {
 		return errors.New("invalid instance document fields")
+	}
+	canonicalDomain, err := CanonicalHostname(d.Domain)
+	if err != nil || canonicalDomain != d.Domain {
+		return errors.New("instance domain is not canonical")
 	}
 	for _, key := range d.OperationalKeys {
 		if len(key.KeyID) != identifiers.ShortLength || len(key.PublicKey) != ed25519.PublicKeySize || key.NotBefore > key.NotAfter {

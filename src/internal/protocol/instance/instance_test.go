@@ -35,3 +35,18 @@ func TestDocumentSignAndVerify(t *testing.T) {
 		t.Fatal("Verify accepted a modified document")
 	}
 }
+
+func TestCanonicalHostname(t *testing.T) {
+	canonical, err := CanonicalHostname("Bücher.Example.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical != "xn--bcher-kva.example" {
+		t.Fatalf("canonical hostname = %q", canonical)
+	}
+	for _, hostname := range []string{"https://example.test", "example.test:443", "example.test/path", ""} {
+		if _, err := CanonicalHostname(hostname); err == nil {
+			t.Errorf("accepted invalid hostname %q", hostname)
+		}
+	}
+}
