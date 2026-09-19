@@ -38,7 +38,7 @@ func testStore(t *testing.T) *Store {
 
 func testReset(ctx context.Context, t *testing.T, store *Store) {
 	t.Helper()
-	for _, table := range []string{"peer_cursors", "peers", "events", "schema_migrations"} {
+	for _, table := range []string{"peer_cursors", "peers", "objects", "events", "schema_migrations"} {
 		if _, err := store.pool.Exec(ctx, `DROP TABLE IF EXISTS `+table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}

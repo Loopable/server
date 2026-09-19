@@ -47,11 +47,11 @@ func (s *Store) PutEvent(ctx context.Context, event events.Event) (StoredEvent, 
 		return StoredEvent{}, err
 	}
 	row := s.pool.QueryRow(ctx, `
-		INSERT INTO events (event_id, event_type, account_id, wire)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO events (event_id, event_type, account_id, group_id, wire)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (event_id) DO NOTHING
 		RETURNING seq
-	`, event.EventID, uint32(event.EventType), event.AccountID, encoded)
+	`, event.EventID, uint32(event.EventType), event.AccountID, groupID(event), encoded)
 
 	var seq int64
 	err = row.Scan(&seq)
@@ -149,6 +149,47 @@ func (s *Store) LatestSeq(ctx context.Context) (uint64, error) {
 	return uint64(seq), err
 }
 
+// EventsForAccount returns every stored event for the account, in any order.
+func (s *Store) EventsForAccount(ctx context.Context, accountID []byte) ([]StoredEvent, error) {
+	return s.eventsByColumn(ctx, "account_id = $1", accountID)
+}
+
+// EventsForGroup returns the stored group-scope events for a group, in any order.
+func (s *Store) EventsForGroup(ctx context.Context, groupID []byte) ([]StoredEvent, error) {
+	return s.eventsByColumn(ctx, "group_id = $1", groupID)
+}
+
+func (s *Store) eventsByColumn(ctx context.Context, where string, argument []byte) ([]StoredEvent, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT seq, event_id, wire
+		FROM events
+		WHERE `+where+`
+		ORDER BY seq ASC
+	`, argument)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	events := make([]StoredEvent, 0)
+	for rows.Next() {
+		var seq int64
+		var eventID []byte
+		var wire []byte
+		if err := rows.Scan(&seq, &eventID, &wire); err != nil {
+			return nil, err
+		}
+		event, err := parseStoredEvent(wire, eventID)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, StoredEvent{Seq: uint64(seq), Event: event})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
 func (s *Store) eventWire(ctx context.Context, eventID []byte) ([]byte, error) {
 	var wire []byte
 	err := s.pool.QueryRow(ctx,
@@ -190,4 +231,24 @@ func int32s(values []uint64) []int32 {
 		converted[i] = int32(value)
 	}
 	return converted
+}
+
+// groupScopeTypes are the event types whose body field 0 names a group, per
+// 34-event-types.md. MESSAGE_CREATED (24) references an object, not a group.
+var groupScopeTypes = map[uint64]bool{17: true, 18: true, 19: true, 20: true, 21: true, 22: true, 23: true}
+
+// groupID returns the group_id column value for a group-scope event.
+func groupID(event events.Event) []byte {
+	if !groupScopeTypes[event.EventType] {
+		return nil
+	}
+	value, ok := event.Body[0]
+	if !ok {
+		return nil
+	}
+	group, ok := value.([]byte)
+	if !ok {
+		return nil
+	}
+	return group
 }
