@@ -37,7 +37,7 @@ type Event struct {
 func NewEventID() ([]byte, error) { return identifiers.Random(identifiers.EventID) }
 
 func (e Event) unsigned() map[uint64]any {
-	value := map[uint64]any{0: ProtocolVersion, 1: e.EventID, 2: e.EventType, 3: e.AccountID, 4: e.DeviceID, 5: e.CreatedAt, 6: e.Predecessors, 7: objectReferences(e.ObjectReferences), 8: e.Body}
+	value := map[uint64]any{0: ProtocolVersion, 1: e.EventID, 2: e.EventType, 3: e.AccountID, 4: deviceID(e.DeviceID), 5: e.CreatedAt, 6: predecessorIDs(e.Predecessors), 7: objectReferences(e.ObjectReferences), 8: e.Body}
 	return value
 }
 
@@ -99,7 +99,7 @@ func (e Event) Validate() error {
 // Wire returns the complete event map, including its signature.
 func (e Event) Wire() map[uint64]any {
 	value := e.unsigned()
-	value[9] = e.Signature
+	value[9] = signatureField(e.Signature)
 	return value
 }
 
@@ -119,6 +119,28 @@ func objectReferences(references []ObjectReference) []any {
 			item[1] = reference.VersionID
 		}
 		value[i] = item
+	}
+	return value
+}
+
+func deviceID(deviceID []byte) []byte {
+	if deviceID == nil {
+		return []byte{}
+	}
+	return deviceID
+}
+
+func signatureField(signature []byte) []byte {
+	if signature == nil {
+		return []byte{}
+	}
+	return signature
+}
+
+func predecessorIDs(predecessors [][]byte) []any {
+	value := make([]any, len(predecessors))
+	for i, predecessor := range predecessors {
+		value[i] = predecessor
 	}
 	return value
 }
