@@ -18,6 +18,7 @@ func TestObjectTypeRegistry(t *testing.T) {
 		ObjectTypeMedia: "media", ObjectTypeDirectMessage: "direct_message", ObjectTypeRelationship: "relationship",
 		ObjectTypeMembership: "membership", ObjectTypeGroupMetadata: "group_metadata",
 		ObjectTypeNotification: "notification", ObjectTypeMLSMessage: "mls_message",
+		ObjectTypeLike: "like",
 	} {
 		resolved, err := LookupType(objectType)
 		if err != nil {

@@ -33,6 +33,7 @@ const (
 	ObjectTypeGroupMetadata uint64 = 7
 	ObjectTypeNotification  uint64 = 8
 	ObjectTypeMLSMessage    uint64 = 9
+	ObjectTypeLike          uint64 = 10
 )
 
 // Encryption suites per protospec/spec/33-object-envelope.md section 33.3.
@@ -70,6 +71,8 @@ func LookupType(objectType uint64) (string, error) {
 		return "notification", nil
 	case ObjectTypeMLSMessage:
 		return "mls_message", nil
+	case ObjectTypeLike:
+		return "like", nil
 	default:
 		return "", fmt.Errorf("unknown object type %d", objectType)
 	}

@@ -177,3 +177,74 @@ func TestSchemaAcceptsValidDeviceAuthorized(t *testing.T) {
 		}
 	}
 }
+
+func TestSchemaAcceptsValidLikeEvents(t *testing.T) {
+	likeCreated := events.Event{
+		EventID:   bytes.Repeat([]byte{2}, identifiers.ShortLength),
+		EventType: 26,
+		AccountID: bytes.Repeat([]byte{1}, identifiers.LongLength),
+		DeviceID:  bytes.Repeat([]byte{3}, identifiers.ShortLength),
+		Body:      map[uint64]any{},
+		ObjectReferences: []events.ObjectReference{{
+			ObjectID:  bytes.Repeat([]byte{4}, identifiers.LongLength),
+			VersionID: bytes.Repeat([]byte{5}, identifiers.LongLength),
+		}},
+	}
+	if err := validateBodySchema(likeCreated); err != nil {
+		t.Fatalf("LIKE_CREATED rejected: %v", err)
+	}
+	likeRemoved := events.Event{
+		EventID:   bytes.Repeat([]byte{6}, identifiers.ShortLength),
+		EventType: 27,
+		AccountID: bytes.Repeat([]byte{1}, identifiers.LongLength),
+		DeviceID:  bytes.Repeat([]byte{3}, identifiers.ShortLength),
+		Body:      map[uint64]any{},
+		ObjectReferences: []events.ObjectReference{{
+			ObjectID: bytes.Repeat([]byte{4}, identifiers.LongLength),
+		}},
+	}
+	if err := validateBodySchema(likeRemoved); err != nil {
+		t.Fatalf("LIKE_REMOVED rejected: %v", err)
+	}
+}
+
+func TestSchemaRejectsInvalidLikeEvents(t *testing.T) {
+	accountID := bytes.Repeat([]byte{1}, identifiers.LongLength)
+	likeCreated := events.Event{
+		EventID:   bytes.Repeat([]byte{2}, identifiers.ShortLength),
+		EventType: 26,
+		AccountID: accountID,
+		DeviceID:  bytes.Repeat([]byte{3}, identifiers.ShortLength),
+		Body:      map[uint64]any{0: "target"},
+		ObjectReferences: []events.ObjectReference{{
+			ObjectID:  bytes.Repeat([]byte{4}, identifiers.LongLength),
+			VersionID: bytes.Repeat([]byte{5}, identifiers.LongLength),
+		}},
+	}
+	if err := validateBodySchema(likeCreated); err == nil {
+		t.Fatal("LIKE_CREATED with a body accepted")
+	}
+	likeCreated.Body = map[uint64]any{}
+	likeCreated.ObjectReferences = []events.ObjectReference{{ObjectID: bytes.Repeat([]byte{4}, identifiers.LongLength)}}
+	if err := validateBodySchema(likeCreated); err == nil {
+		t.Fatal("LIKE_CREATED with a versionless reference accepted")
+	}
+	likeCreated.ObjectReferences = nil
+	if err := validateBodySchema(likeCreated); err == nil {
+		t.Fatal("LIKE_CREATED without a reference accepted")
+	}
+	likeRemoved := events.Event{
+		EventID:   bytes.Repeat([]byte{6}, identifiers.ShortLength),
+		EventType: 27,
+		AccountID: accountID,
+		DeviceID:  bytes.Repeat([]byte{3}, identifiers.ShortLength),
+		Body:      map[uint64]any{},
+		ObjectReferences: []events.ObjectReference{{
+			ObjectID:  bytes.Repeat([]byte{4}, identifiers.LongLength),
+			VersionID: bytes.Repeat([]byte{5}, identifiers.LongLength),
+		}},
+	}
+	if err := validateBodySchema(likeRemoved); err == nil {
+		t.Fatal("LIKE_REMOVED with a versioned reference accepted")
+	}
+}

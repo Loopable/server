@@ -100,6 +100,22 @@ func ValidateReply(body map[uint64]any) error {
 	return noUnexpectedFields(body, 0, 1, 2)
 }
 
+// ValidateLike checks a like object (object type 10) per 55.10: field 0 target
+// object_reference.
+func ValidateLike(body map[uint64]any) error {
+	if len(body) == 0 {
+		return fmt.Errorf("%w: like is empty", ErrEmpty)
+	}
+	target, ok := body[0]
+	if !ok {
+		return fmt.Errorf("%w: target reference is required", ErrInvalid)
+	}
+	if err := validateObjectReference(target); err != nil {
+		return err
+	}
+	return noUnexpectedFields(body, 0)
+}
+
 func requiredBytes(body map[uint64]any, key uint64) ([]byte, error) {
 	value, ok := body[key]
 	if !ok {

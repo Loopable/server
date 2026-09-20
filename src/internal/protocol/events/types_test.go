@@ -11,9 +11,15 @@ func TestEventTypeRegistry(t *testing.T) {
 	if err != nil || definition.Authorization != Authorized {
 		t.Fatalf("post definition = %+v, error = %v", definition, err)
 	}
-	for _, code := range []uint64{10, 11, 26} {
+	for _, code := range []uint64{10, 11, 28, 29} {
 		if _, err := LookupType(code); err == nil {
 			t.Errorf("accepted invalid event type %d", code)
+		}
+	}
+	for _, code := range []uint64{26, 27} {
+		definition, err := LookupType(code)
+		if err != nil || definition.Authorization != Authorized {
+			t.Errorf("like definition = %+v, error = %v", definition, err)
 		}
 	}
 }

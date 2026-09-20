@@ -91,3 +91,24 @@ func TestValidateReply(t *testing.T) {
 		t.Fatalf("malformed parent: got %v, want ErrInvalid", err)
 	}
 }
+
+func TestValidateLike(t *testing.T) {
+	target := map[uint64]any{0: bytes.Repeat([]byte{3}, identifiers.LongLength)}
+	valid := map[uint64]any{0: target}
+	if err := ValidateLike(valid); err != nil {
+		t.Fatalf("valid like rejected: %v", err)
+	}
+	target[1] = bytes.Repeat([]byte{4}, identifiers.LongLength)
+	if err := ValidateLike(valid); err != nil {
+		t.Fatalf("versioned like rejected: %v", err)
+	}
+	if err := ValidateLike(map[uint64]any{}); !errors.Is(err, ErrEmpty) {
+		t.Fatalf("empty like: got %v, want ErrEmpty", err)
+	}
+	if err := ValidateLike(map[uint64]any{1: "extra"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("missing target: got %v, want ErrInvalid", err)
+	}
+	if err := ValidateLike(map[uint64]any{0: "not-a-map"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("malformed target: got %v, want ErrInvalid", err)
+	}
+}

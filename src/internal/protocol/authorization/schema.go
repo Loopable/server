@@ -55,6 +55,8 @@ func validateBodySchema(event events.Event) error {
 		return validateMessageCreatedBody(event)
 	case 25:
 		return validateProfileVisibilityBody(event)
+	case 26, 27:
+		return validateLikeEventBody(event)
 	default:
 		return fmt.Errorf("event type %d has no schema", event.EventType)
 	}
@@ -84,7 +86,7 @@ func validateObjectReferenceCardinality(event events.Event) error {
 	switch event.EventType {
 	case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 17, 18, 19, 20, 22, 25:
 		return none()
-	case 12, 13, 14, 16:
+	case 12, 13, 14, 16, 26:
 		if err := exactlyOne(); err != nil {
 			return err
 		}
@@ -94,12 +96,12 @@ func validateObjectReferenceCardinality(event events.Event) error {
 		return nil
 	case 24:
 		return exactlyOne()
-	case 15:
+	case 15, 27:
 		if err := exactlyOne(); err != nil {
 			return err
 		}
 		if event.ObjectReferences[0].VersionID != nil {
-			return errors.New("POST_DELETED must reference an object without a version")
+			return fmt.Errorf("event type %d must reference an object without a version", event.EventType)
 		}
 		return nil
 	case 21, 23:
@@ -223,6 +225,12 @@ func validateEmptyBody(event events.Event) error {
 		return errors.New("event body must be empty")
 	}
 	return nil
+}
+
+// validateLikeEventBody enforces 34.10 for LIKE_CREATED and LIKE_REMOVED: the
+// body is always empty; the target lives inside the encrypted like object.
+func validateLikeEventBody(event events.Event) error {
+	return validateEmptyBody(event)
 }
 
 func validatePostEditedBody(event events.Event) error {
