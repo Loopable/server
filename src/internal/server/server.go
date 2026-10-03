@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"loopable.party/server/internal/objectstore"
@@ -84,6 +85,9 @@ type Server struct {
 	cfg     Config
 	replay  *federation.ReplayCache
 	limiter *rateLimiter
+	// usernameMu serializes the username availability check with the store
+	// that answers it, so 40.2 holds under concurrent registrations.
+	usernameMu sync.Mutex
 }
 
 // New validates the configuration and assembles the server.

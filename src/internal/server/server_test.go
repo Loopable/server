@@ -94,7 +94,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 	env := &testEnv{server: srv, store: store, blobs: blobs, document: &document, opKeyID: opKey.KeyID, opPriv: opPriv}
-	env.account = newAccountFixture(t, document.InstanceID)
+	env.account = newAccountFixture(t, "alice", document.InstanceID)
 	for _, item := range []events.Event{parseFromWire(t, env.account.genesis)} {
 		if _, err := store.PutEvent(context.Background(), item); err != nil {
 			t.Fatalf("seed event: %v", err)
@@ -254,7 +254,7 @@ func TestEventSubmissionDuplicateAndCollision(t *testing.T) {
 	// The submission account is not seeded: its genesis is genuinely new here,
 	// so the same request exercises status 0 (accepted), 1 (duplicate), and 2
 	// (E_EVENT_ID_COLLISION when the id is reused with different bytes).
-	fresh := newAccountFixture(t, env.document.InstanceID)
+	fresh := newAccountFixture(t, "brian", env.document.InstanceID)
 	fresh.genesis.EventID = bytes.Repeat([]byte{0x0d}, identifiers.ShortLength)
 	if err := fresh.genesis.Sign(fresh.identityPriv); err != nil {
 		t.Fatal(err)
@@ -327,7 +327,7 @@ func TestEventSubmissionAccountScoping(t *testing.T) {
 
 	// Provision a second account so its events are fully valid; otherwise the
 	// DAG check would mask whether account scoping is enforced.
-	fresh := newAccountFixture(t, env.document.InstanceID)
+	fresh := newAccountFixture(t, "brian", env.document.InstanceID)
 	fresh.genesis.EventID = bytes.Repeat([]byte{0x0e}, identifiers.ShortLength)
 	if err := fresh.genesis.Sign(fresh.identityPriv); err != nil {
 		t.Fatal(err)
@@ -509,42 +509,84 @@ func TestAccountLookupHandleFollowsUsernameChange(t *testing.T) {
 	}
 }
 
+// TestUsernameAvailability covers 40.2 on the submission path: a name this
+// instance already hosts is refused to a second account, a rename may not take
+// a name another account holds, and the same name on an account homed
+// elsewhere is a different account that does not collide (11.4).
+func TestUsernameAvailability(t *testing.T) {
+	env := newTestEnv(t)
+
+	taken := newAccountFixture(t, "alice", env.document.InstanceID)
+	requireRejected(t, submitGenesis(t, env, taken.genesis), "E_USERNAME_UNAVAILABLE")
+
+	holder := newAccountFixture(t, "brian", env.document.InstanceID)
+	requireAccepted(t, submitGenesis(t, env, holder.genesis))
+	change := accountUsernameChange(t, env.account, env.account.genesis.EventID, 0x61, uint64(testNow.Unix()), "alice", "brian")
+	requireRejected(t, submitAccountChange(t, env, env.account, change), "E_USERNAME_UNAVAILABLE")
+
+	remote := rehomedAccount(t, "alice", bytes.Repeat([]byte{0xcc}, identifiers.LongLength), 0x65)
+	requireAccepted(t, submitGenesis(t, env, remote.genesis))
+}
+
+// TestUsernameReservation covers 40.3: the name an account gives up stays
+// reserved to it for exactly 90 days from the change's effective time, and
+// becomes available to another account once that window passes.
+func TestUsernameReservation(t *testing.T) {
+	env := newTestEnv(t)
+	leaver := newAccountFixture(t, "leaver", env.document.InstanceID)
+	requireAccepted(t, submitGenesis(t, env, leaver.genesis))
+
+	change := accountUsernameChange(t, leaver, leaver.genesis.EventID, 0x62, uint64(testNow.Unix()), "leaver", "stayer")
+	requireAccepted(t, submitAccountChange(t, env, leaver, change))
+
+	taker := newAccountFixture(t, "leaver", env.document.InstanceID)
+	requireRejected(t, submitGenesis(t, env, taker.genesis), "E_USERNAME_UNAVAILABLE")
+
+	// A second change replays the account's earlier one, so the released name
+	// of that change must still be reserved.
+	second := accountUsernameChange(t, leaver, change.EventID, 0x67, uint64(testNow.Unix()), "stayer", "holder")
+	requireAccepted(t, submitAccountChange(t, env, leaver, second))
+	secondTaker := newAccountFixture(t, "stayer", env.document.InstanceID)
+	requireRejected(t, submitGenesis(t, env, secondTaker.genesis), "E_USERNAME_UNAVAILABLE")
+
+	// The same window measured from a change that is already older than 90 days
+	// has expired, so its released name is free without moving the clock.
+	expired := newAccountFixture(t, "expired", env.document.InstanceID)
+	requireAccepted(t, submitGenesis(t, env, expired.genesis))
+	longAgo := uint64(testNow.Add(-accounts.ReservationPeriod - time.Hour).Unix())
+	release := accountUsernameChange(t, expired, expired.genesis.EventID, 0x66, longAgo, "expired", "retained")
+	requireAccepted(t, submitAccountChange(t, env, expired, release))
+
+	reuser := newAccountFixture(t, "expired", env.document.InstanceID)
+	requireAccepted(t, submitGenesis(t, env, reuser.genesis))
+}
+
+// TestUsernameChangeMustReleaseTheCurrentName covers 34.7: a change that does
+// not release the account's current username is refused, because the 40.3
+// reservation would otherwise be taken from a name the account never held.
+func TestUsernameChangeMustReleaseTheCurrentName(t *testing.T) {
+	env := newTestEnv(t)
+	other := newAccountFixture(t, "brian", env.document.InstanceID)
+	requireAccepted(t, submitGenesis(t, env, other.genesis))
+
+	change := accountUsernameChange(t, env.account, env.account.genesis.EventID, 0x64, uint64(testNow.Unix()), "brian", "alicia")
+	requireRejected(t, submitAccountChange(t, env, env.account, change), "E_BAD_REQUEST")
+}
+
 // TestAccountUsernameGrammar covers 11.6 on the submission path. A name that
 // does not survive normalization into the grammar is refused, and a name
 // proposed in another case is accepted and then served folded, because 11.6
 // makes the folded form the only one stored or compared.
 func TestAccountUsernameGrammar(t *testing.T) {
 	env := newTestEnv(t)
-	path := "/v1/events"
-	submitGenesis := func(genesis events.Event) map[uint64]any {
-		t.Helper()
-		body, err := encoding.Encode([]any{genesis.Wire()})
-		if err != nil {
-			t.Fatal(err)
-		}
-		recorder := do(t, env.server, http.MethodPost, path, "", body,
-			env.instanceAuth(t, http.MethodPost, path, "", body), nil)
-		expectStatus(t, recorder, http.StatusOK)
-		var results []any
-		decodeBody(t, recorder.Body.Bytes(), &results)
-		return asUintMapAny(t, results[0])
-	}
 
-	tooShort := newAccountFixture(t, env.document.InstanceID)
+	tooShort := newAccountFixture(t, "gina", env.document.InstanceID)
 	resignGenesis(t, tooShort, "ab", 0x51)
-	result := submitGenesis(tooShort.genesis)
-	if result[1].(uint64) != 2 {
-		t.Fatalf("ACCOUNT_CREATED with a username outside 11.6: status %v, want 2: %#v", result[1], result)
-	}
-	if code := asUintMapAny(t, result[2])[0]; code != "E_BAD_REQUEST" {
-		t.Fatalf("error code %#v, want E_BAD_REQUEST", code)
-	}
+	requireRejected(t, submitGenesis(t, env, tooShort.genesis), "E_BAD_REQUEST")
 
-	folded := newAccountFixture(t, env.document.InstanceID)
-	resignGenesis(t, folded, "AlicE", 0x52)
-	if result := submitGenesis(folded.genesis); result[1].(uint64) != 0 {
-		t.Fatalf("ACCOUNT_CREATED with a foldable username: status %v, want 0: %#v", result[1], result)
-	}
+	folded := newAccountFixture(t, "frank", env.document.InstanceID)
+	resignGenesis(t, folded, "Frank", 0x52)
+	requireAccepted(t, submitGenesis(t, env, folded.genesis))
 
 	accountText, err := identifiers.String(identifiers.AccountID, folded.accountID)
 	if err != nil {
@@ -556,7 +598,7 @@ func TestAccountUsernameGrammar(t *testing.T) {
 	expectStatus(t, recorder, http.StatusOK)
 	var fields map[uint64]any
 	decodeBody(t, recorder.Body.Bytes(), &fields)
-	if fields[2].(string) != "@alice:"+testDomain {
+	if fields[2].(string) != "@frank:"+testDomain {
 		t.Fatalf("account lookup handle %q, want the folded username", fields[2])
 	}
 }
@@ -567,7 +609,7 @@ func TestAccountUsernameGrammar(t *testing.T) {
 // mistyped handle would, without disclosing that it exists elsewhere.
 func TestAccountHomedElsewhereIsAbsent(t *testing.T) {
 	env := newTestEnv(t)
-	foreign := rehomedAccount(t, bytes.Repeat([]byte{0xbb}, identifiers.LongLength), 0x3b)
+	foreign := rehomedAccount(t, "dana", bytes.Repeat([]byte{0xbb}, identifiers.LongLength), 0x3b)
 	if _, err := env.store.PutEvent(context.Background(), parseFromWire(t, foreign.genesis)); err != nil {
 		t.Fatalf("seed foreign account: %v", err)
 	}
@@ -831,10 +873,90 @@ func TestDeviceJoinRequest(t *testing.T) {
 	expectStatus(t, recorder, http.StatusBadRequest)
 }
 
+// TestDeviceJoinRequestRefusesForeignAccount covers 60.10 with 13.4.1: the
+// endpoint is self-asserted, so an instance must confirm it hosts the account
+// before it stores a pending join. An account federated through this instance
+// is not hosted here.
+func TestDeviceJoinRequestRefusesForeignAccount(t *testing.T) {
+	env := newTestEnv(t)
+	foreign := rehomedAccount(t, "dana", bytes.Repeat([]byte{0xbb}, identifiers.LongLength), 0x3b)
+	if _, err := env.store.PutEvent(context.Background(), parseFromWire(t, foreign.genesis)); err != nil {
+		t.Fatalf("seed foreign account: %v", err)
+	}
+	signing, _, err := signatures.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryption, err := x25519.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := encoding.Encode(map[uint64]any{
+		0: foreign.accountID,
+		1: bytes.Repeat([]byte{0x23}, identifiers.ShortLength),
+		2: signing,
+		3: encryption.PublicKey(),
+		4: accounts.DeviceKindClient,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := do(t, env.server, http.MethodPost, "/v1/device-join-requests", "", body, "", nil)
+	expectStatus(t, recorder, http.StatusBadRequest)
+}
+
 func TestRateLimiterDisabledWithoutConfig(t *testing.T) {
 	env := newTestEnv(t)
 	if ok, _ := env.server.limiter.allow("acc:x", "events"); !ok {
 		t.Fatal("rate limiter rejected a request without configured groups")
+	}
+}
+
+// submitGenesis submits one ACCOUNT_CREATED with instance auth, which is how a
+// client provisions an account (its own first device cannot authenticate yet).
+func submitGenesis(t *testing.T, env *testEnv, genesis events.Event) map[uint64]any {
+	t.Helper()
+	return submitSigned(t, env, genesis, func(body []byte) string {
+		return env.instanceAuth(t, http.MethodPost, "/v1/events", "", body)
+	})
+}
+
+// submitAccountChange submits one event authenticated by an account's device.
+func submitAccountChange(t *testing.T, env *testEnv, account *accountFixture, event events.Event) map[uint64]any {
+	t.Helper()
+	return submitSigned(t, env, event, func(body []byte) string {
+		return env.authHeader(t, account.accountID, keyIDOf(account.first.signing), account.first.private,
+			http.MethodPost, "/v1/events", "", body, account.homeInstance)
+	})
+}
+
+func submitSigned(t *testing.T, env *testEnv, event events.Event, header func([]byte) string) map[uint64]any {
+	t.Helper()
+	body, err := encoding.Encode([]any{event.Wire()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := do(t, env.server, http.MethodPost, "/v1/events", "", body, header(body), nil)
+	expectStatus(t, recorder, http.StatusOK)
+	var results []any
+	decodeBody(t, recorder.Body.Bytes(), &results)
+	return asUintMapAny(t, results[0])
+}
+
+func requireAccepted(t *testing.T, result map[uint64]any) {
+	t.Helper()
+	if result[1].(uint64) != 0 {
+		t.Fatalf("submission status %v, want 0: %#v", result[1], result)
+	}
+}
+
+func requireRejected(t *testing.T, result map[uint64]any, code string) {
+	t.Helper()
+	if result[1].(uint64) != 2 {
+		t.Fatalf("submission status %v, want 2: %#v", result[1], result)
+	}
+	if got := asUintMapAny(t, result[2])[0]; got != code {
+		t.Fatalf("error code %#v, want %q", got, code)
 	}
 }
 
@@ -857,7 +979,7 @@ type accountFixture struct {
 	genesis      events.Event
 }
 
-func newAccountFixture(t *testing.T, homeInstance []byte) *accountFixture {
+func newAccountFixture(t *testing.T, username string, homeInstance []byte) *accountFixture {
 	t.Helper()
 	identityPub, identityPriv, err := signatures.Generate()
 	if err != nil {
@@ -892,14 +1014,18 @@ func newAccountFixture(t *testing.T, homeInstance []byte) *accountFixture {
 	if err := authorization.Sign(identityPriv); err != nil {
 		t.Fatal(err)
 	}
+	eventID, err := identifiers.Random(identifiers.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	genesis := events.Event{
-		EventID:   bytes.Repeat([]byte{0xb1}, identifiers.ShortLength),
+		EventID:   eventID,
 		EventType: 0,
 		AccountID: accountID,
 		CreatedAt: 1,
 		Body: map[uint64]any{
 			0: identityPub,
-			1: "alice",
+			1: username,
 			2: homeInstance,
 			3: authorization.Wire(),
 		},
@@ -910,7 +1036,7 @@ func newAccountFixture(t *testing.T, homeInstance []byte) *accountFixture {
 	return &accountFixture{
 		identityPriv: identityPriv,
 		accountID:    accountID,
-		username:     "alice",
+		username:     username,
 		homeInstance: append([]byte(nil), homeInstance...),
 		first:        first,
 		genesis:      genesis,
@@ -919,9 +1045,9 @@ func newAccountFixture(t *testing.T, homeInstance []byte) *accountFixture {
 
 // rehomedAccount returns a fixture whose genesis names a different home
 // instance, modelling an account this instance does not host.
-func rehomedAccount(t *testing.T, homeInstance []byte, seed uint8) *accountFixture {
+func rehomedAccount(t *testing.T, username string, homeInstance []byte, seed uint8) *accountFixture {
 	t.Helper()
-	account := newAccountFixture(t, homeInstance)
+	account := newAccountFixture(t, username, homeInstance)
 	resignGenesis(t, account, account.username, seed)
 	return account
 }

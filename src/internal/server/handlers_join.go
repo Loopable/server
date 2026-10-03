@@ -36,12 +36,15 @@ func (s *Server) handleDeviceJoinRequests(w http.ResponseWriter, r *http.Request
 
 		// The endpoint is self-asserted (the device is not yet authorized), so
 		// the receiving instance must verify it hosts the account (60.10).
-		stored, err := s.cfg.Events.EventsForAccount(r.Context(), accountID)
-		if err != nil {
+		// Federated accounts are stored here too, and homing is decided by the
+		// instance_id rather than the hostname (13.4.1), so an account this
+		// instance does not host is refused.
+		hosted, err := s.hostsAccount(r.Context(), accountID)
+		if err != nil && !errors.Is(err, ErrEventNotFound) {
 			writeError(w, mapStoreNotFound(err, requestID), requestID)
 			return
 		}
-		if len(stored) == 0 {
+		if !hosted {
 			writeError(w, asInvalidRequest(errors.New("account is not hosted here")), requestID)
 			return
 		}

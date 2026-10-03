@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 
@@ -123,6 +124,21 @@ func accountGenesis(stored []StoredEvent) (eventWithBody, []byte, error) {
 		return eventWithBody{}, nil, err
 	}
 	return genesis, homeInstance, nil
+}
+
+// homesAccount reports whether an account's genesis names this instance. Per
+// 13.4.1 the instance_id decides, not the hostname, so an account federated
+// through this instance is not hosted here.
+func (s *Server) hostsAccount(ctx context.Context, accountID []byte) (bool, error) {
+	stored, err := s.cfg.Events.EventsForAccount(ctx, accountID)
+	if err != nil {
+		return false, err
+	}
+	_, homeInstance, err := accountGenesis(stored)
+	if err != nil {
+		return false, err
+	}
+	return s.instanceDocument().Hosts(homeInstance), nil
 }
 
 type eventWithBody struct{ Body map[uint64]any }

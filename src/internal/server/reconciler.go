@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"loopable.party/server/internal/protocol/accounts"
 	"loopable.party/server/internal/protocol/authorization"
 	"loopable.party/server/internal/protocol/dag"
 	"loopable.party/server/internal/protocol/encoding"
@@ -467,7 +468,8 @@ func isRefusedEvent(err error) bool {
 		errors.Is(err, authorization.ErrTrustConflict),
 		errors.Is(err, authorization.ErrSignatureInvalid),
 		errors.Is(err, authorization.ErrMemberRequired),
-		errors.Is(err, authorization.ErrSchemaInvalid):
+		errors.Is(err, authorization.ErrSchemaInvalid),
+		errors.Is(err, accounts.ErrUsernameUnavailable):
 		return true
 	case errors.Is(err, dag.ErrCycle),
 		errors.Is(err, dag.ErrUnrooted),

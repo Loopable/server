@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"loopable.party/server/internal/objectstore"
+	"loopable.party/server/internal/protocol/accounts"
 	"loopable.party/server/internal/protocol/authorization"
 	"loopable.party/server/internal/protocol/dag"
 	protoerrors "loopable.party/server/internal/protocol/errors"
@@ -86,6 +87,8 @@ func mapError(err error, requestID []byte) *protoerrors.Error {
 		code = "E_UNAUTHORIZED_DEVICE"
 	case errors.Is(err, authorization.ErrFirstDeviceInvalid):
 		code = "E_FIRST_DEVICE_INVALID"
+	case errors.Is(err, accounts.ErrUsernameUnavailable):
+		code = "E_USERNAME_UNAVAILABLE"
 	case errors.Is(err, authorization.ErrSchemaInvalid):
 		code = "E_BAD_REQUEST"
 	case errors.Is(err, authorization.ErrMemberRequired):

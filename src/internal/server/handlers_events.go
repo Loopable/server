@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 
+	"loopable.party/server/internal/protocol/accounts"
 	"loopable.party/server/internal/protocol/authorization"
 	protoerrors "loopable.party/server/internal/protocol/errors"
 	"loopable.party/server/internal/protocol/events"
@@ -70,6 +71,18 @@ func (s *Server) acceptEvent(ctx context.Context, event events.Event) (uint64, e
 		return 0, err
 	}
 	if err := authorization.Validate(event, known, s.membershipFunc(ctx)); err != nil {
+		return 0, err
+	}
+	if !accounts.RegistersUsername(event.EventType) {
+		return s.cfg.Events.PutEvent(ctx, event)
+	}
+	// 40.2 and 40.3: the availability check and the store that answers it are
+	// one critical section, so two concurrent registrations cannot both take a
+	// name. The lock is held for this store only; the rest of acceptance runs
+	// concurrently.
+	s.usernameMu.Lock()
+	defer s.usernameMu.Unlock()
+	if err := s.checkUsername(ctx, event); err != nil {
 		return 0, err
 	}
 	return s.cfg.Events.PutEvent(ctx, event)

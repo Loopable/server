@@ -165,6 +165,18 @@ func eventBodyUint(body map[uint64]any, key uint64) (uint64, error) {
 	return integer, nil
 }
 
+func eventBodyText(body map[uint64]any, key uint64) (string, error) {
+	value, ok := body[key]
+	if !ok {
+		return "", errors.New("missing event body field")
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", errors.New("event body field is not text")
+	}
+	return text, nil
+}
+
 // deriveKeyID returns the key id of a public signing key (61.9): the first 16
 // bytes of SHA-256 of the key.
 func deriveKeyID(publicKey []byte) []byte {
