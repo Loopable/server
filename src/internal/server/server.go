@@ -10,6 +10,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -36,6 +37,9 @@ const (
 // Config wires the server to its repositories and protocol services.
 type Config struct {
 	// Domain is the receiving instance's canonical hostname per 13.4 and 61.4.
+	// It must be the hostname published as `domain` in Document, because that
+	// published label is what peers route by; the domain is a routing label,
+	// not an identity (13.4.1).
 	Domain string
 	// Document is this instance's signed document served at GET /v1/instance.
 	Document *instance.Document
@@ -94,6 +98,13 @@ func New(cfg Config) (*Server, error) {
 	cfg.Domain = canonical
 	if cfg.Document == nil {
 		return nil, errors.New("instance document is required")
+	}
+	published, err := instance.CanonicalHostname(cfg.Document.Domain)
+	if err != nil {
+		return nil, fmt.Errorf("instance document domain: %w", err)
+	}
+	if published != cfg.Domain {
+		return nil, fmt.Errorf("configured domain %q is not the domain published in the instance document (%q)", cfg.Domain, published)
 	}
 	if cfg.Events == nil {
 		return nil, errors.New("event repository is required")

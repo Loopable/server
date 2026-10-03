@@ -94,7 +94,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 	env := &testEnv{server: srv, store: store, blobs: blobs, document: &document, opKeyID: opKey.KeyID, opPriv: opPriv}
-	env.account = newAccountFixture(t)
+	env.account = newAccountFixture(t, document.InstanceID)
 	for _, item := range []events.Event{parseFromWire(t, env.account.genesis)} {
 		if _, err := store.PutEvent(context.Background(), item); err != nil {
 			t.Fatalf("seed event: %v", err)
@@ -254,7 +254,7 @@ func TestEventSubmissionDuplicateAndCollision(t *testing.T) {
 	// The submission account is not seeded: its genesis is genuinely new here,
 	// so the same request exercises status 0 (accepted), 1 (duplicate), and 2
 	// (E_EVENT_ID_COLLISION when the id is reused with different bytes).
-	fresh := newAccountFixture(t)
+	fresh := newAccountFixture(t, env.document.InstanceID)
 	fresh.genesis.EventID = bytes.Repeat([]byte{0x0d}, identifiers.ShortLength)
 	if err := fresh.genesis.Sign(fresh.identityPriv); err != nil {
 		t.Fatal(err)
@@ -327,7 +327,7 @@ func TestEventSubmissionAccountScoping(t *testing.T) {
 
 	// Provision a second account so its events are fully valid; otherwise the
 	// DAG check would mask whether account scoping is enforced.
-	fresh := newAccountFixture(t)
+	fresh := newAccountFixture(t, env.document.InstanceID)
 	fresh.genesis.EventID = bytes.Repeat([]byte{0x0e}, identifiers.ShortLength)
 	if err := fresh.genesis.Sign(fresh.identityPriv); err != nil {
 		t.Fatal(err)
@@ -460,6 +460,9 @@ func TestAccountLookup(t *testing.T) {
 	if fields[2].(string) != env.account.handle {
 		t.Fatalf("account lookup handle %q, want %q", fields[2], env.account.handle)
 	}
+	if !bytes.Equal(fields[3].([]byte), env.document.InstanceID) {
+		t.Fatal("account lookup home_instance is not the instance named by the account's genesis")
+	}
 	summaries, ok := fields[4].([]any)
 	if !ok || len(summaries) == 0 {
 		t.Fatalf("account lookup device summaries missing: %#v", fields[4])
@@ -467,6 +470,63 @@ func TestAccountLookup(t *testing.T) {
 	summary := asUintMapAny(t, summaries[0])
 	if trusted, ok := summary[1].(bool); !ok || !trusted {
 		t.Fatalf("first device trusted flag %#v, want true", summary[1])
+	}
+}
+
+// TestAccountHomedElsewhereIsAbsent covers 13.4.1: an account is homed by the
+// instance_id its genesis names, not by the hostname a request happened to
+// reach. An account this instance does not host must answer exactly as a
+// mistyped handle would, without disclosing that it exists elsewhere.
+func TestAccountHomedElsewhereIsAbsent(t *testing.T) {
+	env := newTestEnv(t)
+	foreign := rehomedAccount(t, bytes.Repeat([]byte{0xbb}, identifiers.LongLength), 0x3b)
+	if _, err := env.store.PutEvent(context.Background(), parseFromWire(t, foreign.genesis)); err != nil {
+		t.Fatalf("seed foreign account: %v", err)
+	}
+	accountText, err := identifiers.String(identifiers.AccountID, foreign.accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lookupPath := "/v1/accounts/" + accountText
+	recorder := do(t, env.server, http.MethodGet, lookupPath, "", nil,
+		env.accountAuth(t, http.MethodGet, lookupPath, "", nil), nil)
+	expectStatus(t, recorder, http.StatusNotFound)
+	var errorValue map[uint64]any
+	decodeBody(t, recorder.Body.Bytes(), &errorValue)
+	if errorValue[0] != "E_NOT_FOUND" {
+		t.Fatalf("lookup error code %#v, want E_NOT_FOUND", errorValue[0])
+	}
+
+	membersPath := "/v1/members/" + accountText
+	recorder = do(t, env.server, http.MethodGet, membersPath, "", nil,
+		env.accountAuth(t, http.MethodGet, membersPath, "", nil), nil)
+	expectStatus(t, recorder, http.StatusNotFound)
+	decodeBody(t, recorder.Body.Bytes(), &errorValue)
+	if errorValue[0] != "E_NOT_FOUND" {
+		t.Fatalf("membership error code %#v, want E_NOT_FOUND", errorValue[0])
+	}
+}
+
+// TestNewRejectsDomainNotPublishedByDocument covers 13.4 and 13.4.1: the domain
+// is the routing label the root key signed, and this instance's identity is its
+// instance_id. A configured hostname the document does not publish routes
+// nowhere and authenticates no peer, because peers sign the published host
+// (61.4).
+func TestNewRejectsDomainNotPublishedByDocument(t *testing.T) {
+	env := newTestEnv(t)
+	_, err := New(Config{
+		Domain:     "other.example",
+		Document:   env.document,
+		Events:     env.store,
+		Objects:    env.store,
+		Blobs:      env.blobs,
+		Devices:    env.store,
+		Membership: env.store,
+		Peers:      NewPeerRegistry(),
+	})
+	if err == nil {
+		t.Fatal("New accepted a domain that the instance document does not publish")
 	}
 }
 
@@ -709,7 +769,7 @@ type accountFixture struct {
 	genesis      events.Event
 }
 
-func newAccountFixture(t *testing.T) *accountFixture {
+func newAccountFixture(t *testing.T, homeInstance []byte) *accountFixture {
 	t.Helper()
 	identityPub, identityPriv, err := signatures.Generate()
 	if err != nil {
@@ -719,7 +779,6 @@ func newAccountFixture(t *testing.T) *accountFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	homeInstance := bytes.Repeat([]byte{0xaa}, identifiers.LongLength)
 	signingPub, signingPriv, err := signatures.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -764,10 +823,23 @@ func newAccountFixture(t *testing.T) *accountFixture {
 		identityPriv: identityPriv,
 		accountID:    accountID,
 		handle:       "alice",
-		homeInstance: homeInstance,
+		homeInstance: append([]byte(nil), homeInstance...),
 		first:        first,
 		genesis:      genesis,
 	}
+}
+
+// rehomedAccount returns a fixture whose genesis names a different home
+// instance, modelling an account this instance does not host. The genesis id
+// is changed so both accounts coexist in one store.
+func rehomedAccount(t *testing.T, homeInstance []byte, seed uint8) *accountFixture {
+	t.Helper()
+	account := newAccountFixture(t, homeInstance)
+	account.genesis.EventID = bytes.Repeat([]byte{seed}, identifiers.ShortLength)
+	if err := account.genesis.Sign(account.identityPriv); err != nil {
+		t.Fatal(err)
+	}
+	return account
 }
 
 func accountPostEvent(t *testing.T, account *accountFixture, predecessor []byte, seed uint8, createdAt uint64, signer ed25519.PrivateKey) events.Event {

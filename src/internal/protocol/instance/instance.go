@@ -4,6 +4,7 @@
 package instance
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"errors"
@@ -30,16 +31,22 @@ type OperationalKey struct {
 }
 
 // Document is the signed public instance identity document.
+//
+// InstanceID is the authoritative identity of the instance. It derives from
+// RootPublicKey alone and survives domain, certificate, and hosting changes
+// (13.2). Domain is a routing label and carries no exclusivity claim
+// (13.4.1), so nothing in this package derives identity from it.
 type Document struct {
 	ProtocolVersion string
 	InstanceID      []byte
 	RootPublicKey   ed25519.PublicKey
 	OperationalKeys []OperationalKey
-	Domain          string
-	Administrator   []byte
-	Description     string
-	Rules           []string
-	Signature       []byte
+	// Domain is the canonical hostname peers route this instance by (13.4).
+	Domain        string
+	Administrator []byte
+	Description   string
+	Rules         []string
+	Signature     []byte
 }
 
 // NewOperationalKey validates a public key and derives its protocol key ID.
@@ -166,6 +173,17 @@ func (d Document) OperationalKey(keyID []byte) (OperationalKey, bool) {
 		}
 	}
 	return OperationalKey{}, false
+}
+
+// Hosts reports whether an account whose genesis declares homeInstance as its
+// home_instance (34.3) is hosted by this instance.
+//
+// Per 13.4.1 an account names its home instance by instance_id, never by the
+// domain. A hostname identifies no instance, so two live instances may publish
+// the same one, and only the instance an account names hosts it. Every other
+// instance treats the account as absent.
+func (d Document) Hosts(homeInstance []byte) bool {
+	return bytes.Equal(d.InstanceID, homeInstance)
 }
 
 func (d Document) unsigned() map[uint64]any {

@@ -32,6 +32,10 @@ type Fetcher func(instanceID []byte) (instance.Document, error)
 // DocumentCache caches verified peer instance documents, per 61.2. It fetches
 // on first contact, when the cached document is stale, and refuses to serve a
 // document on or after the earliest not_after of its operational keys.
+//
+// Entries are keyed by instance_id, which survives a domain change (13.4.1), so
+// a re-fetched document replaces the cached one instead of registering what
+// would look like a second identity for one peer.
 type DocumentCache struct {
 	mu        sync.Mutex
 	fetch     Fetcher

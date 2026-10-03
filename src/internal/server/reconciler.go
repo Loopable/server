@@ -422,6 +422,10 @@ func (r *Reconciler) refreshPeerDocument(ctx context.Context, stale *instance.Do
 		return nil, fmt.Errorf("peer %s sent an invalid instance document: %w", stale.Domain, err)
 	}
 	if !bytes.Equal(document.InstanceID, stale.InstanceID) {
+		// 13.4.1: a domain change keeps the same instance_id, because identity
+		// derives from the root key alone, so a re-fetched document may differ
+		// in its routing label and operational keys. A different instance_id is
+		// a different instance, and no cursor or state crosses between them.
 		return nil, errors.New("peer instance document identity changed")
 	}
 	if err := r.peers.PutPeerDocument(ctx, document.InstanceID, &document); err != nil {

@@ -34,19 +34,28 @@ func (s *Server) handleAccountLookup(w http.ResponseWriter, r *http.Request) {
 }
 
 // accountLookup assembles the lookup map, returning nil when the requester is
-// not permitted to see the account (which maps to E_NOT_FOUND per 91-privacy).
+// not permitted to see the account (which maps to E_NOT_FOUND per 91-privacy)
+// or when the account is homed on another instance (13.4.1).
 func (s *Server) accountLookup(r *http.Request, accountID []byte) (map[uint64]any, error) {
 	stored, err := s.cfg.Events.EventsForAccount(r.Context(), accountID)
 	if err != nil {
 		return nil, err
 	}
-	genesis, err := findGenesis(stored)
+	genesis, homeInstance, err := accountGenesis(stored)
 	if err != nil {
 		return nil, err
 	}
 	identityKey, err := eventBodyBytes(genesis.Body, 0)
 	if err != nil {
 		return nil, err
+	}
+
+	// 13.4.1: instance_id, not the domain, decides which instance hosts an
+	// account. A handle that lands on an instance the account does not name
+	// resolves to nothing, so a collision is indistinguishable from a mistyped
+	// handle and never reveals that the account exists elsewhere.
+	if !s.instanceDocument().Hosts(homeInstance) {
+		return nil, ErrEventNotFound
 	}
 
 	index, deleted, err := buildAccountIndex(stored)
@@ -66,7 +75,7 @@ func (s *Server) accountLookup(r *http.Request, accountID []byte) (map[uint64]an
 		0: accountID,
 		1: identityKey,
 		2: accountHandle(stored),
-		3: s.cfg.Document.InstanceID,
+		3: homeInstance,
 		4: deviceSummaries(index),
 		5: boolUint(deleted),
 		6: profileIsPublic,
@@ -99,6 +108,20 @@ func findGenesis(stored []StoredEvent) (eventWithBody, error) {
 		}
 	}
 	return eventWithBody{}, ErrEventNotFound
+}
+
+// accountGenesis returns an account's ACCOUNT_CREATED together with the
+// home_instance its body declares (34.3).
+func accountGenesis(stored []StoredEvent) (eventWithBody, []byte, error) {
+	genesis, err := findGenesis(stored)
+	if err != nil {
+		return eventWithBody{}, nil, err
+	}
+	homeInstance, err := eventBodyBytes(genesis.Body, 2)
+	if err != nil {
+		return eventWithBody{}, nil, err
+	}
+	return genesis, homeInstance, nil
 }
 
 type eventWithBody struct{ Body map[uint64]any }
@@ -165,6 +188,18 @@ func (s *Server) handleMemberLookup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if len(stored) == 0 {
+			writeError(w, ErrEventNotFound, requestID)
+			return
+		}
+		_, homeInstance, err := accountGenesis(stored)
+		if err != nil {
+			writeError(w, err, requestID)
+			return
+		}
+		// 13.4.1 and 13.5: membership is this instance's own state, so an
+		// account homed on another instance is not a member here and is
+		// reported as absent rather than as a member of a colliding hostname.
+		if !s.instanceDocument().Hosts(homeInstance) {
 			writeError(w, ErrEventNotFound, requestID)
 			return
 		}
