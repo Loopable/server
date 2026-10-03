@@ -509,6 +509,58 @@ func TestAccountLookupHandleFollowsUsernameChange(t *testing.T) {
 	}
 }
 
+// TestAccountUsernameGrammar covers 11.6 on the submission path. A name that
+// does not survive normalization into the grammar is refused, and a name
+// proposed in another case is accepted and then served folded, because 11.6
+// makes the folded form the only one stored or compared.
+func TestAccountUsernameGrammar(t *testing.T) {
+	env := newTestEnv(t)
+	path := "/v1/events"
+	submitGenesis := func(genesis events.Event) map[uint64]any {
+		t.Helper()
+		body, err := encoding.Encode([]any{genesis.Wire()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		recorder := do(t, env.server, http.MethodPost, path, "", body,
+			env.instanceAuth(t, http.MethodPost, path, "", body), nil)
+		expectStatus(t, recorder, http.StatusOK)
+		var results []any
+		decodeBody(t, recorder.Body.Bytes(), &results)
+		return asUintMapAny(t, results[0])
+	}
+
+	tooShort := newAccountFixture(t, env.document.InstanceID)
+	resignGenesis(t, tooShort, "ab", 0x51)
+	result := submitGenesis(tooShort.genesis)
+	if result[1].(uint64) != 2 {
+		t.Fatalf("ACCOUNT_CREATED with a username outside 11.6: status %v, want 2: %#v", result[1], result)
+	}
+	if code := asUintMapAny(t, result[2])[0]; code != "E_BAD_REQUEST" {
+		t.Fatalf("error code %#v, want E_BAD_REQUEST", code)
+	}
+
+	folded := newAccountFixture(t, env.document.InstanceID)
+	resignGenesis(t, folded, "AlicE", 0x52)
+	if result := submitGenesis(folded.genesis); result[1].(uint64) != 0 {
+		t.Fatalf("ACCOUNT_CREATED with a foldable username: status %v, want 0: %#v", result[1], result)
+	}
+
+	accountText, err := identifiers.String(identifiers.AccountID, folded.accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookupPath := "/v1/accounts/" + accountText
+	recorder := do(t, env.server, http.MethodGet, lookupPath, "", nil,
+		env.accountAuth(t, http.MethodGet, lookupPath, "", nil), nil)
+	expectStatus(t, recorder, http.StatusOK)
+	var fields map[uint64]any
+	decodeBody(t, recorder.Body.Bytes(), &fields)
+	if fields[2].(string) != "@alice:"+testDomain {
+		t.Fatalf("account lookup handle %q, want the folded username", fields[2])
+	}
+}
+
 // TestAccountHomedElsewhereIsAbsent covers 13.4.1: an account is homed by the
 // instance_id its genesis names, not by the hostname a request happened to
 // reach. An account this instance does not host must answer exactly as a
@@ -866,16 +918,23 @@ func newAccountFixture(t *testing.T, homeInstance []byte) *accountFixture {
 }
 
 // rehomedAccount returns a fixture whose genesis names a different home
-// instance, modelling an account this instance does not host. The genesis id
-// is changed so both accounts coexist in one store.
+// instance, modelling an account this instance does not host.
 func rehomedAccount(t *testing.T, homeInstance []byte, seed uint8) *accountFixture {
 	t.Helper()
 	account := newAccountFixture(t, homeInstance)
+	resignGenesis(t, account, account.username, seed)
+	return account
+}
+
+// resignGenesis gives the fixture's genesis a fresh event id and re-signs it,
+// so two variants of one fixture can coexist in a store.
+func resignGenesis(t *testing.T, account *accountFixture, username string, seed uint8) {
+	t.Helper()
+	account.genesis.Body[1] = username
 	account.genesis.EventID = bytes.Repeat([]byte{seed}, identifiers.ShortLength)
 	if err := account.genesis.Sign(account.identityPriv); err != nil {
 		t.Fatal(err)
 	}
-	return account
 }
 
 func accountPostEvent(t *testing.T, account *accountFixture, predecessor []byte, seed uint8, createdAt uint64, signer ed25519.PrivateKey) events.Event {

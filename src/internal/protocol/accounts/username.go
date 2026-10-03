@@ -10,10 +10,18 @@ import (
 
 var ErrInvalidUsername = errors.New("invalid username")
 
+// NormalizeUsername applies the normalization 11.6 requires before a username
+// is validated, stored, or compared: Unicode normalization form C, then full
+// case folding. It never returns an error, so an account registered before the
+// grammar was enforced still yields a name in the only form an instance may
+// serve.
+func NormalizeUsername(value string) string {
+	return cases.Fold().String(norm.NFC.String(value))
+}
+
 // CanonicalUsername normalizes and validates a protocol username.
 func CanonicalUsername(value string) (string, error) {
-	value = norm.NFC.String(value)
-	value = cases.Fold().String(value)
+	value = NormalizeUsername(value)
 	if len(value) < 4 || len(value) > 14 {
 		return "", ErrInvalidUsername
 	}

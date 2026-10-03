@@ -21,3 +21,18 @@ func TestCanonicalUsername(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeUsernameFoldsWithoutValidating(t *testing.T) {
+	for value, want := range map[string]string{
+		"alice":   "alice",
+		"AlicE":   "alice",
+		"ALICE":   "alice",
+		"ab":      "ab",
+		"a-b-c-d": "a-b-c-d",
+		"____":    "____",
+	} {
+		if got := NormalizeUsername(value); got != want {
+			t.Errorf("NormalizeUsername(%q) = %q, want %q", value, got, want)
+		}
+	}
+}

@@ -53,6 +53,44 @@ func TestSchemaRejectsUnexpectedBodyField(t *testing.T) {
 	}
 }
 
+func TestSchemaRejectsUsernameOutsideGrammar(t *testing.T) {
+	event := events.Event{
+		EventID:   bytes.Repeat([]byte{2}, identifiers.ShortLength),
+		EventType: 0,
+		AccountID: bytes.Repeat([]byte{1}, identifiers.LongLength),
+		Body: map[uint64]any{
+			0: bytes.Repeat([]byte{4}, 32),
+			1: "ab",
+			2: bytes.Repeat([]byte{5}, identifiers.LongLength),
+			3: map[uint64]any{},
+		},
+	}
+	if err := validateBodySchema(event); err == nil {
+		t.Fatal("ACCOUNT_CREATED with a username outside the 11.6 grammar accepted")
+	}
+	event.Body[1] = "Alice"
+	if err := validateBodySchema(event); err != nil {
+		t.Fatalf("ACCOUNT_CREATED with a foldable username rejected: %v", err)
+	}
+}
+
+func TestSchemaRejectsUsernameChangeOutsideGrammar(t *testing.T) {
+	event := events.Event{
+		EventID:   bytes.Repeat([]byte{2}, identifiers.ShortLength),
+		EventType: 4,
+		AccountID: bytes.Repeat([]byte{1}, identifiers.LongLength),
+		DeviceID:  bytes.Repeat([]byte{3}, identifiers.ShortLength),
+		Body:      map[uint64]any{0: "alice", 1: "1234"},
+	}
+	if err := validateBodySchema(event); err == nil {
+		t.Fatal("USERNAME_CHANGED to a username outside the 11.6 grammar accepted")
+	}
+	event.Body[1] = "alicia"
+	if err := validateBodySchema(event); err != nil {
+		t.Fatalf("USERNAME_CHANGED to a valid username rejected: %v", err)
+	}
+}
+
 func TestSchemaRejectsUnknownDeviceKind(t *testing.T) {
 	event := events.Event{
 		EventID:   bytes.Repeat([]byte{2}, identifiers.ShortLength),

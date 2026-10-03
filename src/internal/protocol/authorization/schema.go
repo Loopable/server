@@ -112,7 +112,7 @@ func validateObjectReferenceCardinality(event events.Event) error {
 
 func validateAccountCreatedBody(event events.Event) error {
 	body := event.Body
-	if _, err := requiredText(body, 1); err != nil {
+	if err := requireUsername(body, 1); err != nil {
 		return err
 	}
 	if _, err := requiredBytesLength(body, 2, identifiers.LongLength); err != nil {
@@ -125,6 +125,20 @@ func validateAccountCreatedBody(event events.Event) error {
 		return errors.New("body field 3 first_device_authorization is required")
 	}
 	return noUnexpectedFields(body, 0, 1, 2, 3)
+}
+
+// requireUsername enforces the 11.6 grammar on a username body field. The name
+// is normalized before validation, so a client may propose any case and the
+// grammar is checked against the form 11.6 stores and compares.
+func requireUsername(body map[uint64]any, key uint64) error {
+	value, err := requiredText(body, key)
+	if err != nil {
+		return err
+	}
+	if _, err := accounts.CanonicalUsername(value); err != nil {
+		return fmt.Errorf("body field %d is not a canonical username: %w", key, err)
+	}
+	return nil
 }
 
 func validateDeviceAuthorizedBody(event events.Event) error {
@@ -175,7 +189,10 @@ func validateUsernameChangedBody(event events.Event) error {
 	if _, err := requiredText(event.Body, 0); err != nil {
 		return err
 	}
-	if _, err := requiredText(event.Body, 1); err != nil {
+	// Body 1 registers the account's next name, so it must match the 11.6
+	// grammar; body 0 only records the name being released, which 34.7 ties to
+	// the account's current one and 40.3 reserves for 90 days.
+	if err := requireUsername(event.Body, 1); err != nil {
 		return err
 	}
 	return noUnexpectedFields(event.Body, 0, 1)
