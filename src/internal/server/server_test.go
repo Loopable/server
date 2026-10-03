@@ -457,8 +457,8 @@ func TestAccountLookup(t *testing.T) {
 	if !bytes.Equal(fields[0].([]byte), env.account.accountID) {
 		t.Fatal("account lookup returned the wrong account ID")
 	}
-	if fields[2].(string) != env.account.handle {
-		t.Fatalf("account lookup handle %q, want %q", fields[2], env.account.handle)
+	if fields[2].(string) != "@"+env.account.username+":"+testDomain {
+		t.Fatalf("account lookup handle %q, want the canonical @username:hostname form", fields[2])
 	}
 	if !bytes.Equal(fields[3].([]byte), env.document.InstanceID) {
 		t.Fatal("account lookup home_instance is not the instance named by the account's genesis")
@@ -470,6 +470,42 @@ func TestAccountLookup(t *testing.T) {
 	summary := asUintMapAny(t, summaries[0])
 	if trusted, ok := summary[1].(bool); !ok || !trusted {
 		t.Fatalf("first device trusted flag %#v, want true", summary[1])
+	}
+}
+
+// TestAccountLookupHandleFollowsUsernameChange covers 11.4 with 34.7: the
+// handle carries the account's current username. USERNAME_CHANGED binds the
+// former name in body 0 and the new one in body 1, and the former name stays
+// reserved for 90 days (40.3) without being the account's handle again.
+func TestAccountLookupHandleFollowsUsernameChange(t *testing.T) {
+	env := newTestEnv(t)
+	change := accountUsernameChange(t, env.account, env.account.genesis.EventID, 0x2c, 5, env.account.username, "alicia")
+	body, err := encoding.Encode([]any{change.Wire()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/v1/events"
+	recorder := do(t, env.server, http.MethodPost, path, "", body,
+		env.accountAuth(t, http.MethodPost, path, "", body), nil)
+	expectStatus(t, recorder, http.StatusOK)
+	var results []any
+	decodeBody(t, recorder.Body.Bytes(), &results)
+	if result := asUintMapAny(t, results[0]); result[1].(uint64) != 0 {
+		t.Fatalf("username change status %v, want 0: %#v", result[1], result)
+	}
+
+	accountText, err := identifiers.String(identifiers.AccountID, env.account.accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookupPath := "/v1/accounts/" + accountText
+	recorder = do(t, env.server, http.MethodGet, lookupPath, "", nil,
+		env.accountAuth(t, http.MethodGet, lookupPath, "", nil), nil)
+	expectStatus(t, recorder, http.StatusOK)
+	var fields map[uint64]any
+	decodeBody(t, recorder.Body.Bytes(), &fields)
+	if fields[2].(string) != "@alicia:"+testDomain {
+		t.Fatalf("account lookup handle %q, want the new username at this instance", fields[2])
 	}
 }
 
@@ -763,7 +799,7 @@ type deviceFixture struct {
 type accountFixture struct {
 	identityPriv ed25519.PrivateKey
 	accountID    []byte
-	handle       string
+	username     string
 	homeInstance []byte
 	first        deviceFixture
 	genesis      events.Event
@@ -822,7 +858,7 @@ func newAccountFixture(t *testing.T, homeInstance []byte) *accountFixture {
 	return &accountFixture{
 		identityPriv: identityPriv,
 		accountID:    accountID,
-		handle:       "alice",
+		username:     "alice",
 		homeInstance: append([]byte(nil), homeInstance...),
 		first:        first,
 		genesis:      genesis,
@@ -858,6 +894,23 @@ func accountPostEvent(t *testing.T, account *accountFixture, predecessor []byte,
 		}},
 	}
 	if err := event.Sign(signer); err != nil {
+		t.Fatal(err)
+	}
+	return event
+}
+
+func accountUsernameChange(t *testing.T, account *accountFixture, predecessor []byte, seed uint8, createdAt uint64, previous, current string) events.Event {
+	t.Helper()
+	event := events.Event{
+		EventID:      bytes.Repeat([]byte{seed}, identifiers.ShortLength),
+		EventType:    4,
+		AccountID:    account.accountID,
+		DeviceID:     account.first.id,
+		CreatedAt:    createdAt,
+		Predecessors: [][]byte{predecessor},
+		Body:         map[uint64]any{0: previous, 1: current},
+	}
+	if err := event.Sign(account.first.private); err != nil {
 		t.Fatal(err)
 	}
 	return event

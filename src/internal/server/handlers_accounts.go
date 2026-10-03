@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"loopable.party/server/internal/protocol/accounts"
 	"loopable.party/server/internal/protocol/identifiers"
 	storepkg "loopable.party/server/internal/store"
 )
@@ -74,7 +75,7 @@ func (s *Server) accountLookup(r *http.Request, accountID []byte) (map[uint64]an
 	response := map[uint64]any{
 		0: accountID,
 		1: identityKey,
-		2: accountHandle(stored),
+		2: s.accountHandle(stored),
 		3: homeInstance,
 		4: deviceSummaries(index),
 		5: boolUint(deleted),
@@ -126,27 +127,24 @@ func accountGenesis(stored []StoredEvent) (eventWithBody, []byte, error) {
 
 type eventWithBody struct{ Body map[uint64]any }
 
-// accountHandle derives the canonical handle of an account from its latest
-// USERNAME_CHANGED event and its genesis username.
-func accountHandle(stored []StoredEvent) string {
-	var handle string
+// accountHandle returns the account's canonical handle (11.4): its current
+// canonical username at this instance's canonical hostname. Only an account
+// whose genesis names this instance reaches this point (13.4.1), so the
+// hostname is always this instance's.
+func (s *Server) accountHandle(stored []StoredEvent) string {
+	var username string
 	for _, item := range stored {
 		switch item.Event.EventType {
-		case 0:
-			if value, ok := item.Event.Body[1]; ok {
-				if text, ok := value.(string); ok {
-					handle = text
-				}
-			}
-		case 4:
-			if value, ok := item.Event.Body[0]; ok {
-				if text, ok := value.(string); ok {
-					handle = text
-				}
+		case 0, 4:
+			// ACCOUNT_CREATED carries the initial username in body 1 (34.3) and
+			// USERNAME_CHANGED the current one in body 1, with the former name
+			// in body 0 (34.7).
+			if text, ok := item.Event.Body[1].(string); ok {
+				username = text
 			}
 		}
 	}
-	return handle
+	return accounts.Handle(username, s.cfg.Domain)
 }
 
 // hasProfileVisibility reports whether an account has elected a public
